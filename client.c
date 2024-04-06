@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
     server_ip_address = NULL;
     server_port_str = NULL;
     message = NULL;
-    
+
     parse_arguments(argc, argv, &client_ip_address, &client_port_str, &server_ip_address, &server_port_str,
                     &message);
     handle_arguments(argv[0], client_ip_address, client_port_str, server_ip_address, server_port_str,
@@ -174,7 +174,7 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
         fprintf(stderr, "%s\n", message);
     }
 
-    fprintf(stderr, "Usage: %s [-h] <address> <port> <message>\n", program_name);
+    fprintf(stderr, "Usage: %s <ip address> <port> <proxy ip address> <proxy port> [-h]\n", program_name);
     fputs("Options:\n", stderr);
     fputs("  -h  Display this help message\n", stderr);
     exit(exit_code);
