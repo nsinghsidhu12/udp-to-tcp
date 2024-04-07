@@ -30,8 +30,28 @@ static void get_address_to_server(struct sockaddr_storage *addr, in_port_t port)
 
 static void socket_close(int sockfd);
 
+void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr);
+
+int file_check(char *file_path);
+
+FILE *file_open(char *file_path);
+
+// Used to encode
+struct PACKET {
+    int seq_num;
+    int ack_num;
+    char* flags;
+    char* data;
+};
+
+struct PACKET *make_packet(int seq_num, int ack_num, char* flags, char* data);
+
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
+#define LINE_LEN 1024
+#define END_STRING ")))"
+
+
 
 int main(int argc, char *argv[]) {
     char *client_ip_address;
@@ -272,4 +292,62 @@ static void socket_close(int sockfd) {
         perror("Error closing socket");
         exit(EXIT_FAILURE);
     }
+}
+
+// Rework this to implement selective repeat.
+
+void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
+    char line[LINE_LEN];
+    char *wordptr;
+    struct PACKET *packets[100];
+    while (fgets(line, sizeof(line), file) != NULL) {
+        const char *word;
+        word = strtok_r(line, " \t\n", &wordptr);
+        while (word != NULL) {
+            size_t word_len = strlen(word);
+            if (word_len > UINT8_MAX) {
+                fprintf(stderr, "Word exceeds maximum length\n");
+                fclose(file);
+                close(sockfd);
+                exit(EXIT_FAILURE);
+            }
+            ssize_t bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
+            if (bytes_sent < 0) {
+                perror("Error sending word content");
+                fclose(file);
+                close(sockfd);
+                exit(EXIT_FAILURE);
+            }
+            word = strtok_r(NULL, " \t\n", &wordptr);
+        }
+    }
+    sendto(sockfd, END_STRING, sizeof(END_STRING) * sizeof(char), 0, (struct sockaddr *) addr, sizeof(*addr));
+}
+
+FILE *file_open(char *file_path) {
+    FILE *file;
+    file = fopen(file_path, "r");
+    if (file == NULL) {
+        perror("File doesn't exist");
+        exit(EXIT_FAILURE);
+    }
+    if (!file_check(file_path)) {
+        exit(EXIT_FAILURE);
+    } else {
+        return file;
+    }
+}
+
+int file_check(char *file_path) {
+    FILE *file = fopen(file_path, "r");
+    fseek(file, 0, SEEK_END);
+    fclose(file);
+    int check;
+    if (ftell(file) == 0) {
+        fprintf(stderr, "File is empty.\n");
+        check = 0;
+    } else {
+        check = 1;
+    }
+    return check;
 }
