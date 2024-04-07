@@ -8,6 +8,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <signal.h>
 
 static void parse_arguments(int argc, char *argv[], char **client_ip_address, char **client_port_str,
                             char **server_ip_address, char **server_port_str, char **msg);
@@ -30,8 +32,29 @@ static void get_address_to_server(struct sockaddr_storage *addr, in_port_t port)
 
 static void socket_close(int sockfd);
 
+void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr);
+
+int file_check(char *file_path);
+
+FILE *file_open(char *file_path);
+
+void handle_timeout(int signal);
+
+// Used to encode
+struct PACKET {
+    int seq_num;
+    int ack_num;
+    char* flags;
+    char* data;
+} typedef Packet;
+
+Packet *make_packet(int seq_num, int ack_num, char* flags, char* data);
+
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
+#define LINE_LEN 1024
+
+bool timeout_occured = 0;
 
 int main(int argc, char *argv[]) {
     char *client_ip_address;
@@ -272,4 +295,119 @@ static void socket_close(int sockfd) {
         perror("Error closing socket");
         exit(EXIT_FAILURE);
     }
+}
+
+void handle_timeout(int signal) {
+    timeout_occured = 1;
+}
+// Rework this to implement go back n.
+
+void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
+    signal(SIGALRM, handle_timeout);
+    char line[LINE_LEN];
+    char *wordptr;
+    int seq_num = 0;
+    int base = 0;
+    Packet *packets[10]; // Packets buffer to be used for selective repeat.
+    ssize_t bytes_sent = 0;
+    while (fgets(line, sizeof(line), file) != NULL) {
+        char *word;
+        word = strtok_r(line, " \t\n", &wordptr);
+        while (word != NULL) {
+            size_t word_len = strlen(word);
+            if (word_len > UINT8_MAX) {
+                fprintf(stderr, "Word exceeds maximum length\n");
+                fclose(file);
+                close(sockfd);
+                exit(EXIT_FAILURE);
+            }
+            Packet *packet = make_packet(seq_num, 0, "", word);
+            packets[seq_num % 10] = packet;
+            seq_num++;
+
+            if (seq_num >= 10 + base) {
+                for (int i = base; i < base + 10 && i < seq_num; i++) {
+                    bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
+                }
+            }
+
+            timeout_occured = false;
+            alarm((unsigned int) 0.01);
+
+            //handle acks here
+            // if ack received then
+            // base++
+            // reset the timer
+            //
+
+
+            if(timeout_occured) {
+                for (int i = base; i < base + 10 && i < seq_num; i++) {
+                    bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
+                }
+                timeout_occured = false;
+            }
+
+
+            if (bytes_sent < 0) {
+                perror("Error sending word content");
+                fclose(file);
+                close(sockfd);
+                exit(EXIT_FAILURE);
+            }
+            word = strtok_r(NULL, " \t\n", &wordptr);
+
+            for (int i = base; i < base + 10 && i < seq_num; i++) {
+                // If ACK received for packet i, remove it from the buffer
+                free(packets[i % 10]);
+            }
+            base = seq_num; // Move the window forward
+        }
+    }
+
+}
+
+FILE *file_open(char *file_path) {
+    FILE *file;
+    file = fopen(file_path, "r");
+    if (file == NULL) {
+        perror("File doesn't exist");
+        exit(EXIT_FAILURE);
+    }
+    if (!file_check(file_path)) {
+        exit(EXIT_FAILURE);
+    } else {
+        return file;
+    }
+}
+
+int file_check(char *file_path) {
+    FILE *file = fopen(file_path, "r");
+    fseek(file, 0, SEEK_END);
+    fclose(file);
+    int check;
+    if (ftell(file) == 0) {
+        fprintf(stderr, "File is empty.\n");
+        check = 0;
+    } else {
+        check = 1;
+    }
+    return check;
+}
+
+Packet *make_packet(int seq_num, int ack_num, char* flags, char* data) {
+    Packet *packet = (Packet *)malloc(sizeof(Packet));
+    if (ack_num) {
+        packet->ack_num = ack_num;
+    }
+    if (seq_num) {
+        packet->seq_num = seq_num;
+    }
+    if (flags) {
+        packet->flags = flags;
+    }
+    if (data) {
+        packet->data = data;
+    }
+    return packet;
 }
