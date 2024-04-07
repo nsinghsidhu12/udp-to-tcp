@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include <signal.h>
 #include <errno.h>
+#include <time.h>
 
 static void parse_arguments(int argc, char *argv[], char **proxy_ip_address, char **proxy_port_str,
                             char **client_ip_address, char **client_port_str, char **server_ip_address,
@@ -37,11 +38,19 @@ static int handle_proxy(int socket_fd, char *client_ip_address, in_port_t client
                         double client_drop_delay_chance, double server_drop_delay_chance, double client_min_delay,
                         double client_max_delay, double server_min_delay, double server_max_delay);
 
-static void set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t *dest_socket_addr_len,
+static char* set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t *dest_socket_addr_len,
                             struct sockaddr_storage inc_socket_addr, char *client_ip_address, in_port_t client_port,
                             char *server_ip_address, in_port_t server_port);
 
 static void get_destination_address(struct sockaddr_storage *socket_addr, in_port_t port);
+
+static void calculate_drops(int *drop_flag, int *drop_delay_flag, double *min_delay, double *max_delay,
+                            double client_drop_pkt_chance, double server_drop_pkt_chance, char *dest_entity,
+                            double client_drop_delay_chance, double server_drop_delay_chance, double client_min_delay,
+                            double client_max_delay, double server_min_delay, double server_max_delay);
+
+static void forward_packet(int socket_fd, char *buffer, struct sockaddr_storage dest_socket_addr,
+                            socklen_t dest_socket_addr_len);
 
 _Noreturn static void usage(char *program_name, int exit_code, char *message);
 
@@ -53,10 +62,17 @@ static in_port_t parse_in_port_t(char *program_name, char *input);
 
 static void socket_close(int socket_fd);
 
-#define LINE_LEN 1024
+#define WORD_LEN 256
 #define NO_ARG_MESSAGE_LEN 128
 #define UNKNOWN_OPTION_MESSAGE_LEN 64
 #define BASE_TEN 10
+#define ENTITY_OPTION_LEN 4
+#define SERVER "server"
+#define CLIENT "client"
+
+#define MILLISECONDS_IN_NANOSECONDS 1000000
+#define MIN_DELAY_MILLISECONDS 500
+#define MAX_ADDITIONAL_NANOSECONDS 1000000000
 
 static volatile sig_atomic_t exit_flag = 0;
 
@@ -70,6 +86,9 @@ int main(int argc, char *argv[]) {
     char *server_ip_address = NULL;
     char *server_port_str = NULL;
     in_port_t server_port = 0;
+
+    double client_options[ENTITY_OPTION_LEN];
+    double server_options[ENTITY_OPTION_LEN];
     double client_drop_pkt_chance = 50;
     double server_drop_pkt_chance = 50;
     double client_drop_delay_chance = 50;
@@ -341,11 +360,15 @@ static int handle_proxy(int socket_fd, char *client_ip_address, in_port_t client
                         double client_max_delay, double server_min_delay, double server_max_delay) {
     while (!exit_flag) {
         struct sockaddr_storage inc_socket_addr;
-        socklen_t inc_socket_addr_len;
-        inc_socket_addr_len = sizeof(inc_socket_addr);
+        socklen_t inc_socket_addr_len = sizeof(inc_socket_addr);
         struct sockaddr_storage dest_socket_addr;
         socklen_t dest_socket_addr_len;
-        char buffer[LINE_LEN + 1];
+        char buffer[WORD_LEN + 1];
+        char *dest_entity;
+        int drop_flag = 0;
+        int drop_delay_flag = 0;
+        double min_delay = 0;
+        double max_delay = 0;
 
         ssize_t bytes_received = recvfrom(socket_fd, buffer, sizeof(buffer) - 1, 0,
                                           (struct sockaddr *) &inc_socket_addr, &inc_socket_addr_len);
@@ -357,15 +380,22 @@ static int handle_proxy(int socket_fd, char *client_ip_address, in_port_t client
         buffer[(size_t) bytes_received] = '\0';
         printf("read %zu characters: \"%s\" from\n", (size_t) bytes_received, buffer);
 
-        set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, client_ip_address, client_port,
-                        server_ip_address, server_port);
+        dest_entity = set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, client_ip_address,
+                                      client_port, server_ip_address, server_port);
 
-        ssize_t bytes_sent = sendto(socket_fd, buffer, strlen(buffer) + 1, 0,
-                                    (struct sockaddr *) &dest_socket_addr, dest_socket_addr_len);
+        calculate_drops(&drop_flag, &drop_delay_flag, &min_delay, &max_delay, client_drop_pkt_chance,
+                        server_drop_pkt_chance, dest_entity, client_drop_delay_chance, server_drop_delay_chance,
+                        client_min_delay, client_max_delay, server_min_delay, server_max_delay);
 
-        if (bytes_sent == -1) {
-            perror("sendto");
-            exit(EXIT_FAILURE);
+        if (drop_flag == 0) {
+            if (drop_delay_flag == 0) {
+                struct timespec delay;
+                delay.tv_sec  = 10;
+                delay.tv_nsec = 0;
+                nanosleep(&delay, NULL);
+            }
+
+            forward_packet(socket_fd, buffer, dest_socket_addr, dest_socket_addr_len);
         }
     }
 
@@ -374,7 +404,7 @@ static int handle_proxy(int socket_fd, char *client_ip_address, in_port_t client
     return EXIT_SUCCESS;
 }
 
-static void set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t *dest_socket_addr_len,
+static char* set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t *dest_socket_addr_len,
                             struct sockaddr_storage inc_socket_addr, char *client_ip_address, in_port_t client_port,
                             char *server_ip_address, in_port_t server_port) {
     char ip_address[INET6_ADDRSTRLEN];
@@ -393,10 +423,14 @@ static void set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t
     if (strcmp(ip_address, client_ip_address) == 0 && (port == client_port)) {
         convert_address(server_ip_address, dest_socket_addr, dest_socket_addr_len);
         get_destination_address(dest_socket_addr, server_port);
+        return CLIENT;
     } else if (strcmp(ip_address, server_ip_address) == 0 && (port == server_port)) {
         convert_address(client_ip_address, dest_socket_addr, dest_socket_addr_len);
         get_destination_address(dest_socket_addr, client_port);
+        return SERVER;
     }
+
+    return NULL;
 }
 
 static void get_destination_address(struct sockaddr_storage *socket_addr, in_port_t port) {
@@ -412,6 +446,42 @@ static void get_destination_address(struct sockaddr_storage *socket_addr, in_por
         ipv6_addr = (struct sockaddr_in6 *) socket_addr;
         ipv6_addr->sin6_family = AF_INET6;
         ipv6_addr->sin6_port = htons(port);
+    }
+}
+
+static void forward_packet(int socket_fd, char *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
+    ssize_t bytes_sent = sendto(socket_fd, buffer, strlen(buffer) + 1, 0,
+                                (struct sockaddr *) &dest_socket_addr, dest_socket_addr_len);
+
+    if (bytes_sent == -1) {
+        perror("sendto");
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void calculate_drops(int *drop_flag, int *drop_delay_flag, double *min_delay, double *max_delay,
+                            double client_drop_pkt_chance, double server_drop_pkt_chance, char *dest_entity,
+                            double client_drop_delay_chance, double server_drop_delay_chance, double client_min_delay,
+                            double client_max_delay, double server_min_delay, double server_max_delay) {
+    srand(time(NULL));
+    float random_float = ((float) rand() / RAND_MAX) * 99 + 1;
+
+    if (strcmp(dest_entity, CLIENT) == 0) {
+        *min_delay = client_min_delay;
+        *max_delay = client_max_delay;
+        if (random_float <= client_drop_pkt_chance) {
+            *drop_flag = 1;
+        } else if (random_float <= client_drop_delay_chance) {
+            *drop_delay_flag = 1;
+        }
+    } else if (strcmp(dest_entity, SERVER) == 0) {
+        *min_delay = server_min_delay;
+        *max_delay = server_max_delay;
+        if (random_float <= server_drop_pkt_chance) {
+            *drop_flag = 1;
+        } else if (random_float <= server_drop_delay_chance) {
+            *drop_delay_flag = 1;
+        }
     }
 }
 
