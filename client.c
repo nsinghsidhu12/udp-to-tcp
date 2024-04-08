@@ -43,9 +43,7 @@ void handle_timeout(int signal);
 // Used to encode
 struct PACKET {
     int seq_num;
-    int ack_num;
-    char* flags;
-    char* data;
+    char data[1025];
 } typedef Packet;
 
 Packet *make_packet(int seq_num, int ack_num, char* flags, char* data);
@@ -88,15 +86,22 @@ int main(int argc, char *argv[]) {
 
     convert_address(server_ip_address, &server_socket_addr, &server_socket_addr_len);
     get_address_to_server(&server_socket_addr, server_port);
-    bytes_sent = sendto(sockfd, message, strlen(message) + 1, 0,
-                        (struct sockaddr *) &server_socket_addr, server_socket_addr_len);
-
-    if (bytes_sent == -1) {
-        perror("sendto");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Sent %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+//    bytes_sent = sendto(sockfd, message, strlen(message) + 1, 0,
+//                        (struct sockaddr *) &server_socket_addr, server_socket_addr_len);
+//
+//    if (bytes_sent == -1) {
+//        perror("sendto");
+//        exit(EXIT_FAILURE);
+//    }
+//
+//    printf("Sent %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+//
+//    recvfrom(sockfd, message, strlen(message) + 1, 0, (struct sockaddr *) &server_socket_addr, &server_socket_addr_len);
+//
+//    printf("Received %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+    printf("%s", argv[5]);
+    FILE *file = file_open(message);
+    file_data(file, sockfd, &server_socket_addr);
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
@@ -321,11 +326,12 @@ void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
                 close(sockfd);
                 exit(EXIT_FAILURE);
             }
+            printf("Word: %s \n", word);
             Packet *packet = make_packet(seq_num, 0, "", word);
             packets[seq_num % 10] = packet;
             seq_num++;
 
-            if (seq_num >= 10 + base) {
+            if (seq_num <= 10 + base) {
                 for (int i = base; i < base + 10 && i < seq_num; i++) {
                     bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
                 }
@@ -359,6 +365,8 @@ void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
 
             for (int i = base; i < base + 10 && i < seq_num; i++) {
                 // If ACK received for packet i, remove it from the buffer
+//                free(packets[i % 10]->data);
+//                free(packets[i % 10]->flags);
                 free(packets[i % 10]);
             }
             base = seq_num; // Move the window forward
@@ -397,17 +405,13 @@ int file_check(char *file_path) {
 
 Packet *make_packet(int seq_num, int ack_num, char* flags, char* data) {
     Packet *packet = (Packet *)malloc(sizeof(Packet));
-    if (ack_num) {
-        packet->ack_num = ack_num;
+    if (packet == NULL) {
+        perror("Error allocating memory for packet");
+        exit(EXIT_FAILURE);
     }
-    if (seq_num) {
-        packet->seq_num = seq_num;
-    }
-    if (flags) {
-        packet->flags = flags;
-    }
-    if (data) {
-        packet->data = data;
-    }
+
+    packet->seq_num = seq_num;
+    strcpy(packet->data, data);
+
     return packet;
 }
