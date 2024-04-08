@@ -30,6 +30,7 @@ static void socket_close(int sockfd);
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define LINE_LEN 1024
 #define BASE_TEN 10
+#define END_STRING ")))"
 
 int main(int argc, char *argv[]) {
     char *address;
@@ -59,6 +60,9 @@ int main(int argc, char *argv[]) {
 
     buffer[(size_t) bytes_received] = '\0';
     handle_packet(sockfd, &client_addr, buffer, (size_t) bytes_received);
+
+    sendto(sockfd, "helloback", 9 + 1, 0, (struct sockaddr*) &client_addr, client_addr_len);
+
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
@@ -220,7 +224,30 @@ static void socket_bind(int sockfd, struct sockaddr_storage *addr, in_port_t por
 }
 
 static void handle_packet(int client_sockfd, struct sockaddr_storage *client_addr, const char *buffer, size_t bytes) {
-    printf("%d read %zu characters: \"%s\" from\n", client_sockfd, bytes, buffer);
+//    send(client_sockfd, buffer, bytes, 0);
+//    printf("%d read %zu characters: \"%s\" from\n", client_sockfd, bytes, buffer);
+    while (1) {
+        socklen_t client_addr_len = sizeof(*client_addr);
+        char word[UINT8_MAX + 1];
+        ssize_t bytes_received = recvfrom(client_sockfd, word, sizeof(word), 0, (struct sockaddr *) client_addr,
+                                          &client_addr_len);
+        if (bytes_received <= 0) {
+            if (bytes_received < 0) {
+                perror("Error receiving data from client");
+            }
+            break;
+        }
+
+        // Send ACKS if the packet is received in order
+
+        if (strcmp(word, END_STRING) == 0) {
+            // Client sent termination message, break the loop
+            break;
+        }
+
+        // Echo back the received word to the client
+        sendto(client_sockfd, word, bytes_received, 0, (struct sockaddr *) client_addr, client_addr_len);
+    }
 }
 
 static void socket_close(int sockfd) {

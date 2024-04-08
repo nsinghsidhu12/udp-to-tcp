@@ -8,6 +8,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <signal.h>
 
 static void parse_arguments(int argc, char *argv[], char **client_ip_address, char **client_port_str,
                             char **server_ip_address, char **server_port_str, char **msg);
@@ -36,22 +38,23 @@ int file_check(char *file_path);
 
 FILE *file_open(char *file_path);
 
+void handle_timeout(int signal);
+
 // Used to encode
 struct PACKET {
     int seq_num;
     int ack_num;
     char* flags;
     char* data;
-};
+} typedef Packet;
 
-struct PACKET *make_packet(int seq_num, int ack_num, char* flags, char* data);
+Packet *make_packet(int seq_num, int ack_num, char* flags, char* data);
 
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
 #define LINE_LEN 1024
-#define END_STRING ")))"
 
-
+bool timeout_occured = 0;
 
 int main(int argc, char *argv[]) {
     char *client_ip_address;
@@ -94,6 +97,11 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Sent %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+
+    recvfrom(sockfd, message, strlen(message) + 1, 0, (struct sockaddr *) &server_socket_addr, &server_socket_addr_len);
+
+    printf("Received %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
@@ -294,14 +302,21 @@ static void socket_close(int sockfd) {
     }
 }
 
-// Rework this to implement selective repeat.
+void handle_timeout(int signal) {
+    timeout_occured = 1;
+}
+// Rework this to implement go back n.
 
 void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
+    signal(SIGALRM, handle_timeout);
     char line[LINE_LEN];
     char *wordptr;
-    struct PACKET *packets[100];
+    int seq_num = 0;
+    int base = 0;
+    Packet *packets[10]; // Packets buffer to be used for selective repeat.
+    ssize_t bytes_sent = 0;
     while (fgets(line, sizeof(line), file) != NULL) {
-        const char *word;
+        char *word;
         word = strtok_r(line, " \t\n", &wordptr);
         while (word != NULL) {
             size_t word_len = strlen(word);
@@ -311,7 +326,34 @@ void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
                 close(sockfd);
                 exit(EXIT_FAILURE);
             }
-            ssize_t bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
+            Packet *packet = make_packet(seq_num, 0, "", word);
+            packets[seq_num % 10] = packet;
+            seq_num++;
+
+            if (seq_num >= 10 + base) {
+                for (int i = base; i < base + 10 && i < seq_num; i++) {
+                    bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
+                }
+            }
+
+            timeout_occured = false;
+            alarm((unsigned int) 0.01);
+
+            //handle acks here
+            // if ack received then
+            // base++
+            // reset the timer
+            //
+
+
+            if(timeout_occured) {
+                for (int i = base; i < base + 10 && i < seq_num; i++) {
+                    bytes_sent = sendto(sockfd, word, word_len, 0, (struct sockaddr *) addr, sizeof(*addr));
+                }
+                timeout_occured = false;
+            }
+
+
             if (bytes_sent < 0) {
                 perror("Error sending word content");
                 fclose(file);
@@ -319,9 +361,15 @@ void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
                 exit(EXIT_FAILURE);
             }
             word = strtok_r(NULL, " \t\n", &wordptr);
+
+            for (int i = base; i < base + 10 && i < seq_num; i++) {
+                // If ACK received for packet i, remove it from the buffer
+                free(packets[i % 10]);
+            }
+            base = seq_num; // Move the window forward
         }
     }
-    sendto(sockfd, END_STRING, sizeof(END_STRING) * sizeof(char), 0, (struct sockaddr *) addr, sizeof(*addr));
+
 }
 
 FILE *file_open(char *file_path) {
@@ -350,4 +398,19 @@ int file_check(char *file_path) {
         check = 1;
     }
     return check;
+}
+
+Packet *make_packet(int seq_num, int ack_num, char* flags, char* data) {
+    Packet *packet = (Packet *)malloc(sizeof(Packet));
+    if (packet == NULL) {
+        perror("Error allocating memory for packet");
+        exit(EXIT_FAILURE);
+    }
+
+    packet->seq_num = seq_num;
+    packet->ack_num = ack_num;
+    packet->flags = flags;  // No memory allocation needed here
+    packet->data = data;    // No memory allocation needed here
+
+    return packet;
 }
