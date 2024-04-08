@@ -23,22 +23,28 @@ static int socket_create(int domain, int type, int protocol);
 
 static void socket_bind(int sockfd, struct sockaddr_storage *addr, in_port_t port);
 
-static void handle_packet(int client_sockfd, struct sockaddr_storage *client_addr, const char *buffer, size_t bytes);
+static void handle_packet(int client_sockfd, struct sockaddr_storage *client_addr);
 
 static void socket_close(int sockfd);
+
+void send_ACK(int client_sockfd, struct sockaddr_storage *client_addr, int seq, socklen_t address_len);
 
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define LINE_LEN 1024
 #define BASE_TEN 10
 #define END_STRING ")))"
 
+struct PACKET {
+    int seq_num;
+    char data [1025];
+} typedef Packet;
+
 int main(int argc, char *argv[]) {
     char *address;
     char *port_str;
     in_port_t port;
     int sockfd;
-    char buffer[LINE_LEN + 1];
-    ssize_t bytes_received;
+//    ssize_t bytes_received;
     struct sockaddr_storage client_addr;
     socklen_t client_addr_len;
     struct sockaddr_storage addr;
@@ -51,17 +57,17 @@ int main(int argc, char *argv[]) {
     sockfd = socket_create(addr.ss_family, SOCK_DGRAM, 0);
     socket_bind(sockfd, &addr, port);
     client_addr_len = sizeof(client_addr);
-    bytes_received = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *) &client_addr,
-                              &client_addr_len);
+//    bytes_received = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *) &client_addr,
+//                              &client_addr_len);
+//
+//    if (bytes_received == -1) {
+//        perror("recvfrom");
+//    }
 
-    if (bytes_received == -1) {
-        perror("recvfrom");
-    }
+//    buffer[(size_t) bytes_received] = '\0';
+    handle_packet(sockfd, &client_addr);
 
-    buffer[(size_t) bytes_received] = '\0';
-    handle_packet(sockfd, &client_addr, buffer, (size_t) bytes_received);
-
-    sendto(sockfd, "helloback", 9 + 1, 0, (struct sockaddr*) &client_addr, client_addr_len);
+//    sendto(sockfd, "helloback", 9 + 1, 0, (struct sockaddr*) &client_addr, client_addr_len);
 
     socket_close(sockfd);
 
@@ -223,10 +229,15 @@ static void socket_bind(int sockfd, struct sockaddr_storage *addr, in_port_t por
     printf("Bound to socket: %s:%u\n", addr_str, port);
 }
 
-static void handle_packet(int client_sockfd, struct sockaddr_storage *client_addr, const char *buffer, size_t bytes) {
+static void handle_packet(int client_sockfd, struct sockaddr_storage *client_addr) {
 //    send(client_sockfd, buffer, bytes, 0);
-//    printf("%d read %zu characters: \"%s\" from\n", client_sockfd, bytes, buffer);
-    while (1) {
+    Packet *packet = malloc(sizeof(Packet));
+//    memset(&packet, 0, sizeof(packet));
+    int check = 1;
+    char buffer[LINE_LEN + 1];
+    int seq = 0;
+//    printf("%d read characters: \"%s\" from\n", client_sockfd, buffer);
+    while (seq < 10) {
         socklen_t client_addr_len = sizeof(*client_addr);
         char word[UINT8_MAX + 1];
         ssize_t bytes_received = recvfrom(client_sockfd, word, sizeof(word), 0, (struct sockaddr *) client_addr,
@@ -237,17 +248,32 @@ static void handle_packet(int client_sockfd, struct sockaddr_storage *client_add
             }
             break;
         }
+        printf("Buffer: %s", buffer);
+//        memcpy(buffer, packet, sizeof(buffer));
+
+        strcpy(packet->data, word);
+        if(packet->seq_num == seq) {
+            printf("Word Received: %s", packet->data);
+            send_ACK(client_sockfd,client_addr,seq,client_addr_len);
+            seq++;
+            printf("%d", seq);
+        } else {
+            send_ACK(client_sockfd,client_addr,seq - 1,client_addr_len);
+        }
 
         // Send ACKS if the packet is received in order
-
         if (strcmp(word, END_STRING) == 0) {
+            check = 0;
             // Client sent termination message, break the loop
             break;
         }
-
         // Echo back the received word to the client
-        sendto(client_sockfd, word, bytes_received, 0, (struct sockaddr *) client_addr, client_addr_len);
+//        sendto(client_sockfd, word, bytes_received, 0, (struct sockaddr *) client_addr, client_addr_len);
     }
+}
+
+void send_ACK(int client_sockfd, struct sockaddr_storage *client_addr, int seq, socklen_t address_len) {
+    sendto(client_sockfd, &seq, sizeof(seq), 0 ,(struct sockaddr*)client_addr, address_len);
 }
 
 static void socket_close(int sockfd) {
