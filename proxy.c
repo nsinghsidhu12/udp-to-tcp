@@ -92,6 +92,7 @@ int main(int argc, char *argv[]) {
     bind_socket(socket_fd, &proxy_socket_addr, proxy.port);
     setup_signal_handler();
     handle_proxy(socket_fd, client, server, client_opt, server_opt);
+    handle_proxy(socket_fd, server, client, server_opt, client_opt);
 
     return EXIT_SUCCESS;
 }

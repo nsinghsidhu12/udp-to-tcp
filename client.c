@@ -97,6 +97,11 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Sent %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+
+    recvfrom(sockfd, message, strlen(message) + 1, 0, (struct sockaddr *) &server_socket_addr, &server_socket_addr_len);
+
+    printf("Received %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
+
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
@@ -397,17 +402,15 @@ int file_check(char *file_path) {
 
 Packet *make_packet(int seq_num, int ack_num, char* flags, char* data) {
     Packet *packet = (Packet *)malloc(sizeof(Packet));
-    if (ack_num) {
-        packet->ack_num = ack_num;
+    if (packet == NULL) {
+        perror("Error allocating memory for packet");
+        exit(EXIT_FAILURE);
     }
-    if (seq_num) {
-        packet->seq_num = seq_num;
-    }
-    if (flags) {
-        packet->flags = flags;
-    }
-    if (data) {
-        packet->data = data;
-    }
+
+    packet->seq_num = seq_num;
+    packet->ack_num = ack_num;
+    packet->flags = flags;  // No memory allocation needed here
+    packet->data = data;    // No memory allocation needed here
+
     return packet;
 }
