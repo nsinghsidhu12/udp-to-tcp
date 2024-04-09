@@ -23,6 +23,11 @@ struct entity_opt {
     double max_delay;
 };
 
+struct __attribute__((packed)) PACKET {
+    int seq_num;
+    char data[256];
+} typedef Packet;
+
 static void parse_arguments(int argc, char *argv[], struct entity *proxy, struct entity *client, struct entity *server,
                             struct entity_opt *client_opt, struct entity_opt *server_opt);
 
@@ -39,11 +44,11 @@ static void setup_signal_handler();
 
 static void sigint_handler(int signum);
 
-static int handle_proxy(int socket_fd, struct entity client, struct entity server, struct entity_opt client_opt,
-                        struct entity_opt server_opt);
+static int handle_proxy(int socket_fd, struct entity from, struct entity to, struct entity_opt from_opt,
+                        struct entity_opt to_opt);
 
 static char* set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t *dest_socket_addr_len,
-                            struct sockaddr_storage inc_socket_addr, struct entity client, struct entity server);
+                             struct sockaddr_storage inc_socket_addr, struct entity client, struct entity server);
 
 static void get_destination_address(struct sockaddr_storage *socket_addr, in_port_t port);
 
@@ -53,8 +58,8 @@ static void set_drop_flags(char* dest_entity, int *drop_flag, int *drop_delay_fl
 static void set_delay(char* dest_entity, struct timespec *delay, struct entity_opt client_opt,
                       struct entity_opt server_opt);
 
-static void forward_packet(int socket_fd, char *buffer, struct sockaddr_storage dest_socket_addr,
-                            socklen_t dest_socket_addr_len);
+static void forward_packet(int socket_fd, void *buffer, struct sockaddr_storage dest_socket_addr,
+                           socklen_t dest_socket_addr_len);
 
 _Noreturn static void usage(char *program_name, int exit_code, char *message);
 
@@ -92,7 +97,7 @@ int main(int argc, char *argv[]) {
     bind_socket(socket_fd, &proxy_socket_addr, proxy.port);
     setup_signal_handler();
     handle_proxy(socket_fd, client, server, client_opt, server_opt);
-    handle_proxy(socket_fd, server, client, server_opt, client_opt);
+//    handle_proxy(socket_fd, server, client, server_opt, client_opt);
 
     return EXIT_SUCCESS;
 }
@@ -319,39 +324,45 @@ static void setup_signal_handler(void) {
     }
 }
 
-static int handle_proxy(int socket_fd, struct entity client, struct entity server, struct entity_opt client_opt,
-                        struct entity_opt server_opt) {
+static int handle_proxy(int socket_fd, struct entity from, struct entity to, struct entity_opt from_opt,
+                        struct entity_opt to_opt) {
     while (!exit_flag) {
         struct sockaddr_storage inc_socket_addr;
         socklen_t inc_socket_addr_len = sizeof(inc_socket_addr);
         struct sockaddr_storage dest_socket_addr;
         socklen_t dest_socket_addr_len;
-        char buffer[WORD_LEN + 1];
+        char buffer[sizeof(Packet)];
         char *dest_entity;
         int drop_flag = 0;
         int drop_delay_flag = 0;
+        Packet *packet = malloc(sizeof(Packet));
 
-        ssize_t bytes_received = recvfrom(socket_fd, buffer, sizeof(buffer) - 1, 0,
+        ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(packet)+1, 0,
                                           (struct sockaddr *) &inc_socket_addr, &inc_socket_addr_len);
 
         if (bytes_received == -1) {
             perror("recvfrom");
+            free(packet);
+            continue;
         }
+        memcpy(buffer, &packet, sizeof(Packet));
+//        printf("Packet data: %s %d", packet->data, packet->seq_num);
+//        buffer[(size_t) bytes_received] = '\0';
+        printf("read %zu characters: \"%s\" from \n", (size_t) bytes_received, packet->data);
+        printf("%lu", sizeof(packet));
 
-        buffer[(size_t) bytes_received] = '\0';
-        printf("read %zu characters: \"%s\" from\n", (size_t) bytes_received, buffer);
-
-        dest_entity = set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, client, server);
-        set_drop_flags(dest_entity, &drop_flag, &drop_delay_flag, client_opt, server_opt);
+        dest_entity = set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, from, to);
+        set_drop_flags(dest_entity, &drop_flag, &drop_delay_flag, from_opt, to_opt);
 
         if (drop_flag == 0) {
             if (drop_delay_flag == 0) {
                 struct timespec delay;
-                set_delay(dest_entity, &delay, client_opt, server_opt);
+                set_delay(dest_entity, &delay, from_opt, to_opt);
                 nanosleep(&delay, NULL);
             }
-            forward_packet(socket_fd, buffer, dest_socket_addr, dest_socket_addr_len);
+            forward_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
         }
+        free(packet);
     }
 
     socket_close(socket_fd);
@@ -414,8 +425,8 @@ static void get_destination_address(struct sockaddr_storage *socket_addr, in_por
     }
 }
 
-static void forward_packet(int socket_fd, char *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
-    ssize_t bytes_sent = sendto(socket_fd, buffer, strlen(buffer) + 1, 0,
+static void forward_packet(int socket_fd,  void *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
+    ssize_t bytes_sent = sendto(socket_fd, buffer, strlen(buffer), 0,
                                 (struct sockaddr *) &dest_socket_addr, dest_socket_addr_len);
 
     if (bytes_sent == -1) {
@@ -568,3 +579,4 @@ static void socket_close(int socket_fd) {
         exit(EXIT_FAILURE);
     }
 }
+

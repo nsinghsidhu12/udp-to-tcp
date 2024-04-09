@@ -29,25 +29,29 @@ static void socket_close(int sockfd);
 
 void send_ACK(int client_sockfd, struct sockaddr_storage *client_addr, int seq, socklen_t address_len);
 
+void handle_client(int sockfd, struct sockaddr_storage *addr, socklen_t addr_len);
+
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define LINE_LEN 1024
 #define BASE_TEN 10
 #define END_STRING ")))"
 
-struct PACKET {
+struct __attribute__((packed)) PACKET {
     int seq_num;
-    char data [1025];
+    char data [256];
 } typedef Packet;
 
 int main(int argc, char *argv[]) {
     char *address;
     char *port_str;
+    char buffer[LINE_LEN + 1];
     in_port_t port;
     int sockfd;
-//    ssize_t bytes_received;
+    ssize_t bytes_received;
     struct sockaddr_storage client_addr;
     socklen_t client_addr_len;
     struct sockaddr_storage addr;
+
 
     address = NULL;
     port_str = NULL;
@@ -63,12 +67,24 @@ int main(int argc, char *argv[]) {
 //    if (bytes_received == -1) {
 //        perror("recvfrom");
 //    }
-
+//
 //    buffer[(size_t) bytes_received] = '\0';
     handle_packet(sockfd, &client_addr);
-
+//    printf("Client sent: %s", buffer);
 //    sendto(sockfd, "helloback", 9 + 1, 0, (struct sockaddr*) &client_addr, client_addr_len);
 
+//    bytes_received = recvfrom(sockfd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *) &client_addr,
+//                              &client_addr_len);
+//
+//    if (bytes_received == -1) {
+//        perror("recvfrom");
+//    }
+//
+//    buffer[(size_t) bytes_received] = '\0';
+//    handle_packet(sockfd, &client_addr, buffer, (size_t) bytes_received);
+//
+//    sendto(sockfd, "helloback", 9 + 1, 0, (struct sockaddr*) &client_addr, client_addr_len);
+//    send(sockfd, buffer, (size_t) bytes_received, 0);
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
@@ -229,51 +245,54 @@ static void socket_bind(int sockfd, struct sockaddr_storage *addr, in_port_t por
     printf("Bound to socket: %s:%u\n", addr_str, port);
 }
 
-static void handle_packet(int client_sockfd, struct sockaddr_storage *client_addr) {
-//    send(client_sockfd, buffer, bytes, 0);
-    Packet *packet = malloc(sizeof(Packet));
-//    memset(&packet, 0, sizeof(packet));
-    int check = 1;
-    char buffer[LINE_LEN + 1];
-    int seq = 0;
-//    printf("%d read characters: \"%s\" from\n", client_sockfd, buffer);
-    while (seq < 10) {
-        socklen_t client_addr_len = sizeof(*client_addr);
-        char word[UINT8_MAX + 1];
-        ssize_t bytes_received = recvfrom(client_sockfd, word, sizeof(word), 0, (struct sockaddr *) client_addr,
-                                          &client_addr_len);
-        if (bytes_received <= 0) {
-            if (bytes_received < 0) {
-                perror("Error receiving data from client");
-            }
-            break;
-        }
-        printf("Buffer: %s", buffer);
-//        memcpy(buffer, packet, sizeof(buffer));
-
-        strcpy(packet->data, word);
-        if(packet->seq_num == seq) {
-            printf("Word Received: %s", packet->data);
-            send_ACK(client_sockfd,client_addr,seq,client_addr_len);
-            seq++;
-            printf("%d", seq);
-        } else {
-            send_ACK(client_sockfd,client_addr,seq - 1,client_addr_len);
-        }
-
-        // Send ACKS if the packet is received in order
-        if (strcmp(word, END_STRING) == 0) {
-            check = 0;
-            // Client sent termination message, break the loop
-            break;
-        }
-        // Echo back the received word to the client
-//        sendto(client_sockfd, word, bytes_received, 0, (struct sockaddr *) client_addr, client_addr_len);
+Packet *make_packet(int seq_num, char* data) {
+    Packet *packet = (Packet *)malloc(sizeof(Packet));
+    if (packet == NULL) {
+        perror("Error allocating memory for Packet");
+        exit(EXIT_FAILURE);
     }
+    packet->seq_num = seq_num;
+    strcpy(packet->data, data);
+    return packet;
 }
 
-void send_ACK(int client_sockfd, struct sockaddr_storage *client_addr, int seq, socklen_t address_len) {
-    sendto(client_sockfd, &seq, sizeof(seq), 0 ,(struct sockaddr*)client_addr, address_len);
+void handle_packet(int sockfd, struct sockaddr_storage *addr) {
+    socklen_t addr_len = sizeof(&addr);
+    char buffer[sizeof(Packet)];
+    Packet *packet = (Packet *)malloc(sizeof(Packet));
+    int last_ack = -1; // Last ACKed sequence number
+    int expected_seq_num = 0; // Expected next sequence number
+    while (1) {
+        ssize_t bytes_received = recvfrom(sockfd, packet, sizeof(packet)+1, 0, (struct sockaddr *) addr, &addr_len);
+        if (bytes_received == -1) {
+            perror("recvfrom");
+            exit(EXIT_FAILURE);
+        }
+//        printf("%s", packet);
+//        deserialize_packet(buffer, packet);
+//        memcpy(packet, buffer, sizeof(*packet));
+
+        if (packet->seq_num == expected_seq_num) {
+            // ACKS
+            last_ack = packet->seq_num;
+            printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Sending ACK: %d\n", last_ack);
+//            free(packet);
+            Packet *ackpacket = make_packet(last_ack, "");
+            sendto(sockfd, ackpacket, sizeof(&ackpacket), 0, (struct sockaddr *) addr, addr_len);
+            free(ackpacket);
+            expected_seq_num++;
+        } else {
+            printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
+            printf("Packet info: %s, %d", packet->data,packet->seq_num);
+            printf("Sending ACK: %d\n", last_ack);
+//            free(packet);
+            Packet *ackpacket = make_packet(last_ack, "");
+            sendto(sockfd, ackpacket, sizeof(&ackpacket), 0, (struct sockaddr *) addr, addr_len);
+            free(ackpacket);
+        }
+//        free(packet);
+    }
 }
 
 static void socket_close(int sockfd) {
