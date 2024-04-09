@@ -401,8 +401,6 @@ static char* set_destination(struct sockaddr_storage *dest_socket_addr, socklen_
         fprintf(stderr, "Destination is not the client or server");
         exit(EXIT_FAILURE);
     }
-
-    return NULL;
 }
 
 static void get_destination_address(struct sockaddr_storage *socket_addr, in_port_t port) {
