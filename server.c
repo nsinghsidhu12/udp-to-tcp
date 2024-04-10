@@ -279,7 +279,7 @@ void handle_packet(int sockfd, struct sockaddr_storage *addr) {
             printf("Sending ACK: %d\n", last_ack);
 //            free(packet);
             Packet *ackpacket = make_packet(last_ack, "ACK");
-            sendto(sockfd, ackpacket, sizeof(Packet)+1, 0, (struct sockaddr *) addr, addr_len);
+            sendto(sockfd, ackpacket, sizeof(Packet), 0, (struct sockaddr *) addr, addr_len);
             free(ackpacket);
             expected_seq_num++;
         } else {
