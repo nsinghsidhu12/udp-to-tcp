@@ -58,7 +58,7 @@ static void set_drop_flags(char* dest_entity, int *drop_flag, int *drop_delay_fl
 static void set_delay(char* dest_entity, struct timespec *delay, struct entity_opt client_opt,
                       struct entity_opt server_opt);
 
-static void forward_packet(int socket_fd, void *buffer, struct sockaddr_storage dest_socket_addr,
+static void forward_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                            socklen_t dest_socket_addr_len);
 
 _Noreturn static void usage(char *program_name, int exit_code, char *message);
@@ -337,7 +337,7 @@ static int handle_proxy(int socket_fd, struct entity from, struct entity to, str
         int drop_delay_flag = 0;
         Packet *packet = malloc(sizeof(Packet));
 
-        ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(packet)+1, 0,
+        ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0,
                                           (struct sockaddr *) &inc_socket_addr, &inc_socket_addr_len);
 
         if (bytes_received == -1) {
@@ -348,8 +348,8 @@ static int handle_proxy(int socket_fd, struct entity from, struct entity to, str
         memcpy(buffer, &packet, sizeof(Packet));
 //        printf("Packet data: %s %d", packet->data, packet->seq_num);
 //        buffer[(size_t) bytes_received] = '\0';
-        printf("read %zu characters: \"%s\" from \n", (size_t) bytes_received, packet->data);
-        printf("%lu", sizeof(packet));
+        printf("read %zu characters: \"%s\" sequence: %d \n", (size_t) bytes_received, packet->data, packet->seq_num);
+//        printf("%lu", sizeof(packet));
 
         dest_entity = set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, from, to);
         set_drop_flags(dest_entity, &drop_flag, &drop_delay_flag, from_opt, to_opt);
@@ -361,6 +361,8 @@ static int handle_proxy(int socket_fd, struct entity from, struct entity to, str
                 nanosleep(&delay, NULL);
             }
             forward_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
+        } else {
+            printf("Packet dropped: %s Seq %d\n", packet->data, packet->seq_num);
         }
         free(packet);
     }
@@ -423,8 +425,8 @@ static void get_destination_address(struct sockaddr_storage *socket_addr, in_por
     }
 }
 
-static void forward_packet(int socket_fd,  void *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
-    ssize_t bytes_sent = sendto(socket_fd, buffer, strlen(buffer), 0,
+static void forward_packet(int socket_fd,  Packet *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
+    ssize_t bytes_sent = sendto(socket_fd, buffer, sizeof(Packet), 0,
                                 (struct sockaddr *) &dest_socket_addr, dest_socket_addr_len);
 
     if (bytes_sent == -1) {
@@ -435,7 +437,8 @@ static void forward_packet(int socket_fd,  void *buffer, struct sockaddr_storage
 
 static void set_drop_flags(char* dest_entity, int *drop_flag, int *drop_delay_flag, struct entity_opt client_opt,
                            struct entity_opt server_opt) {
-    srand(time(NULL));
+//    srand(time(NULL));
+//    srand(29013.2321);
     float random_num = ((float) rand() / RAND_MAX) * 99 + 1;
 
     if (strcmp(dest_entity, CLIENT) == 0) {

@@ -263,7 +263,7 @@ void handle_packet(int sockfd, struct sockaddr_storage *addr) {
     int last_ack = -1; // Last ACKed sequence number
     int expected_seq_num = 0; // Expected next sequence number
     while (1) {
-        ssize_t bytes_received = recvfrom(sockfd, packet, sizeof(packet)+1, 0, (struct sockaddr *) addr, &addr_len);
+        ssize_t bytes_received = recvfrom(sockfd, packet, sizeof(Packet), 0, (struct sockaddr *) addr, &addr_len);
         if (bytes_received == -1) {
             perror("recvfrom");
             exit(EXIT_FAILURE);
@@ -278,17 +278,17 @@ void handle_packet(int sockfd, struct sockaddr_storage *addr) {
             printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
 //            free(packet);
-            Packet *ackpacket = make_packet(last_ack, "");
-            sendto(sockfd, ackpacket, sizeof(&ackpacket), 0, (struct sockaddr *) addr, addr_len);
+            Packet *ackpacket = make_packet(last_ack, "ACK");
+            sendto(sockfd, ackpacket, sizeof(Packet)+1, 0, (struct sockaddr *) addr, addr_len);
             free(ackpacket);
             expected_seq_num++;
         } else {
             printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
-            printf("Packet info: %s, %d", packet->data,packet->seq_num);
+            printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
 //            free(packet);
-            Packet *ackpacket = make_packet(last_ack, "");
-            sendto(sockfd, ackpacket, sizeof(&ackpacket), 0, (struct sockaddr *) addr, addr_len);
+            Packet *ackpacket = make_packet(last_ack, "ACK");
+            sendto(sockfd, ackpacket, sizeof(Packet), 0, (struct sockaddr *) addr, addr_len);
             free(ackpacket);
         }
 //        free(packet);
