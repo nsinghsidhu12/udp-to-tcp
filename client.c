@@ -8,7 +8,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <stdbool.h>
 #include <signal.h>
 
 static void parse_arguments(int argc, char *argv[], char **client_ip_address, char **client_port_str,
@@ -32,35 +31,25 @@ static void get_address_to_server(struct sockaddr_storage *addr, in_port_t port)
 
 static void socket_close(int sockfd);
 
-void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr);
-
-int file_check(char *file_path);
-
-FILE *file_open(char *file_path);
-
 void handle_timeout(int signal);
 
-// Used to encode
 struct __attribute__((packed)) PACKET {
     int seq_num;
     char data[256];
 } typedef Packet;
 
-struct ACK {
-    int ack_num;
-} typedef Ack;
-
 Packet *make_packet(int seq_num, char* data);
 
-void Timeout(FILE *file, int sockfd, const struct sockaddr_storage *addr, int seq_num, int base, socklen_t addr_len,
-             Packet *const *packets, ssize_t bytes_sent);
+char **word_maker(char *buffer);
+
+void send_packets(int sockfd, struct sockaddr_storage *addr, char *message);
 
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
 #define LINE_LEN 1024
 #define WINDOW_SIZE 10
 
-bool timeout_occured;
+static volatile sig_atomic_t timeout_occurred = 0;
 
 int main(int argc, char *argv[]) {
     char *client_ip_address;
@@ -76,6 +65,7 @@ int main(int argc, char *argv[]) {
     socklen_t client_socket_addr_len;
     struct sockaddr_storage server_socket_addr;
     socklen_t server_socket_addr_len;
+    struct sigaction myAction;
 
     client_ip_address = NULL;
     client_port_str = NULL;
@@ -94,20 +84,8 @@ int main(int argc, char *argv[]) {
 
     convert_address(server_ip_address, &server_socket_addr, &server_socket_addr_len);
     get_address_to_server(&server_socket_addr, server_port);
-//    bytes_sent = sendto(sockfd, message, strlen(message) + 1, 0,
-//                        (struct sockaddr *) &server_socket_addr, server_socket_addr_len);
-//
-//    if (bytes_sent == -1) {
-//        perror("sendto");
-//        exit(EXIT_FAILURE);
-//    }
-//
-//    printf("Sent %zu bytes: \"%s\"\n", (size_t) bytes_sent, message);
-//
+    send_packets(sockfd, &server_socket_addr, message);
 
-//    printf("%s", argv[5]);
-    FILE *file = file_open(message);
-    file_data(file, sockfd, &server_socket_addr);
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
@@ -309,162 +287,8 @@ static void socket_close(int sockfd) {
 }
 
 void handle_timeout(int signal) {
-    timeout_occured = 1;
+    timeout_occurred = 1;
     printf("In Timeout\n");
-}
-
-void file_data(FILE *file, int sockfd, struct sockaddr_storage *addr) {
-    signal(SIGALRM, handle_timeout);
-    char line[LINE_LEN];
-    char *wordptr;
-    int seq_num = 0;
-    int base = 0;
-    socklen_t addr_len = sizeof(*addr);
-    Packet *packets[10]; // Packets buffer to be used for selective repeat.
-    ssize_t bytes_sent = 0;
-    char buffer[sizeof(Packet)];
-    int last_ack_received = 0; // Initialize last ack received to an invalid value
-
-    while (1) {
-        // Read the file line by line
-        if (fgets(line, sizeof(line), file) != NULL) {
-            char *word;
-            word = strtok_r(line, " \t\n", &wordptr);
-            while (word != NULL) {
-                size_t word_len = strlen(word);
-                if (word_len > UINT8_MAX) {
-                    fprintf(stderr, "Word exceeds maximum length\n");
-                    fclose(file);
-                    close(sockfd);
-                    exit(EXIT_FAILURE);
-                }
-                if (seq_num < base + 10) {
-                    Packet *packet = make_packet(seq_num, word);
-                    packets[seq_num % 10] = packet;
-//                    serialize_packet(packet, buffer);
-                    printf("Packet Created: %s, %d\n", packet->data, packet->seq_num);
-                    bytes_sent = sendto(sockfd, packet, sizeof(Packet) + 1, 0, (struct sockaddr *) addr, addr_len);
-                    seq_num++;
-                }
-
-                word = strtok_r(NULL, " \t\n", &wordptr);
-            }
-
-
-        } else {
-            break;
-        }
-
-        alarm(2);
-
-        if (bytes_sent < 0) {
-            perror("Error re-sending packet");
-            fclose(file);
-            close(sockfd);
-            exit(EXIT_FAILURE);
-        }
-
-
-        do {
-            Packet ack;
-            ssize_t bytes_received;
-            while (1) {
-                bytes_received = recvfrom(sockfd, &ack, sizeof(Packet), MSG_DONTWAIT, (struct sockaddr *) addr, &addr_len);
-                if (bytes_received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                    if (timeout_occured == 1) {
-                        Timeout(file, sockfd, addr, seq_num, base, addr_len, packets, bytes_sent);
-                    }
-                    continue;
-                } else if (bytes_received <= 0) {
-                    break;
-                }
-
-                printf("Received ACK: %d %s\n", ack.seq_num, ack.data);
-                if (ack.seq_num > last_ack_received) {
-                    last_ack_received = ack.seq_num;
-                }
-
-                alarm(0);
-                base = ack.seq_num + 1; // Advance the base
-                printf("Base: %d\n", base);
-                printf("Last ACK: %d\n", last_ack_received);
-                break;
-            }
-
-        } while (base <= last_ack_received);
-
-//        printf("Before timeout loop\n");
-
-    }
-    // Wait for remaining ACKs
-//    do {
-//        Packet *ack = (Packet *) malloc(sizeof(Packet));
-////        printf("Before Final Ack\n");
-//        ssize_t bytes_received = recvfrom(sockfd, &ack, sizeof(Packet)+1, 0, (struct sockaddr *) addr, &addr_len);
-////        printf("After Final Ack\n");
-//        if (bytes_received > 0) {
-//            printf("Received ACK: %d\n", ack->seq_num);
-//            if (ack->seq_num > last_ack_received) {
-//                base = ack->seq_num + 1;
-//                last_ack_received = ack->seq_num;
-//            }
-//        }
-//        free(ack);
-//    } while (base <= last_ack_received);
-    for (int i = 0; i < WINDOW_SIZE; i++) {
-        free(packets[i]);
-    }
-
-    printf("While: %s", "Running\n");
-}
-
-void Timeout(FILE *file, int sockfd, const struct sockaddr_storage *addr, int seq_num, int base, socklen_t addr_len,
-             Packet *const *packets, ssize_t bytes_sent) {
-    if (timeout_occured) {
-        printf("Entered timeout loop\n");
-        for (int i = base; i < seq_num; i++) {
-            Packet *packet = packets[i % WINDOW_SIZE];
-            bytes_sent = sendto(sockfd, packet, sizeof(Packet)+1, 0, (struct sockaddr *) addr, addr_len);
-            if (bytes_sent < 0) {
-                perror("Error re-sending packet");
-                fclose(file);
-                close(sockfd);
-                exit(EXIT_FAILURE);
-            }
-            printf("Re-sent Packet: %s, %d\n", packet->data, packet->seq_num);
-        }
-        timeout_occured = 0; // Reset timeout flag
-    }
-//    return bytes_sent;
-}
-
-
-FILE *file_open(char *file_path) {
-    FILE *file;
-    file = fopen(file_path, "r");
-    if (file == NULL) {
-        perror("File doesn't exist");
-        exit(EXIT_FAILURE);
-    }
-    if (!file_check(file_path)) {
-        exit(EXIT_FAILURE);
-    } else {
-        return file;
-    }
-}
-
-int file_check(char *file_path) {
-    FILE *file = fopen(file_path, "r");
-    fseek(file, 0, SEEK_END);
-    fclose(file);
-    int check;
-    if (ftell(file) == 0) {
-        fprintf(stderr, "File is empty.\n");
-        check = 0;
-    } else {
-        check = 1;
-    }
-    return check;
 }
 
 Packet *make_packet(int seq_num, char* data) {
@@ -474,7 +298,112 @@ Packet *make_packet(int seq_num, char* data) {
         exit(EXIT_FAILURE);
     }
     packet->seq_num = seq_num;
-//    memset(packet->data, 0, sizeof(packet->data));
     strcpy(packet->data, data);
     return packet;
 }
+
+char **word_maker(char *buffer) {
+    size_t size = strlen(buffer);
+    char **words = malloc(size * sizeof(char *));
+    if (words == NULL) {
+        perror("Words array memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+    int word_count = 0;
+    char *token = strtok(buffer, " \t\n");
+    while (token != NULL) {
+        words[word_count++] = token;
+        token = strtok(NULL, " \t\n");
+    }
+    return words;
+}
+
+void send_window_packets(int sockfd, struct sockaddr_storage *addr, char **words, int word_count, Packet **packets, const int *base, int *next_seq, socklen_t addr_len) {
+    while (*next_seq < (*base + WINDOW_SIZE) && *next_seq < word_count) {
+        Packet *packet = make_packet(*next_seq, words[*next_seq]);
+        packets[*next_seq % WINDOW_SIZE] = packet;
+        ssize_t bytes_sent = sendto(sockfd, packet, sizeof(Packet) + 1, 0, (struct sockaddr *)addr, addr_len);
+        printf("Packet sent Data: %s Seq: %d\n", packet->data, packet->seq_num);
+        (*next_seq)++;
+    }
+}
+
+void send_packets(int sockfd, struct sockaddr_storage *addr, char *message) {
+    signal(SIGALRM, handle_timeout);
+    char **words = word_maker(message);
+    int word_count = 0;
+
+    for (int i = 0; words[i] != NULL; i++) {
+        word_count++;
+    }
+
+    Packet *packets[WINDOW_SIZE];
+    int seq = 0;
+    int base = 0;
+    int next_seq = 0;
+    socklen_t addr_len = sizeof(*addr);
+    ssize_t bytes_sent;
+    int ack = 0;
+
+    while (base < word_count) {
+        send_window_packets(sockfd, addr, words, word_count, packets, &base, &next_seq, addr_len);
+        alarm(1);
+
+        while (ack < WINDOW_SIZE) {
+            Packet *ack_packet = (Packet *)malloc(sizeof(Packet));
+            ssize_t bytes_received = recvfrom(sockfd, ack_packet, sizeof(Packet) + 1, 0, (struct sockaddr *)addr, &addr_len);
+
+            if (bytes_received < 0) {
+                perror("No ACKs received");
+                close(sockfd);
+                exit(EXIT_FAILURE);
+            }
+
+            if (bytes_received > 0) {
+                printf("Received ACK: Seq: %d\n", ack_packet->seq_num);
+                ack++;
+                if (ack_packet->seq_num == base) {
+                    while (base < next_seq) {
+                        base++;
+                    }
+
+                    alarm(0);
+                    break;
+                }
+            }
+            free(ack_packet);
+        }
+        if (timeout_occurred) {
+            printf("timeout\n");
+            for (int i = base; i < next_seq; i++) {
+                    Packet *packet = packets[i % WINDOW_SIZE];
+                    bytes_sent = sendto(sockfd, packet, sizeof(Packet) + 1, 0, (struct sockaddr *)addr, addr_len);
+                    printf("Retransmitted Packet Data: %s Seq: %d\n", packet->data, packet->seq_num);
+
+                    if (bytes_sent < 0) {
+                        break;
+                    }
+            }
+        }
+        ack = 0;
+    }
+
+    for (int i = 0; i < WINDOW_SIZE; i++) {
+        printf("%s %d\n", packets[i]->data, packets[i]->seq_num);
+        free(packets[i]);
+    }
+
+    free(*words);
+}
+
+
+
+
+
+
+
+
+
+
+
+

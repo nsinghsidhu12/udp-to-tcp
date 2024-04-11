@@ -258,7 +258,6 @@ Packet *make_packet(int seq_num, char* data) {
 
 void handle_packet(int sockfd, struct sockaddr_storage *addr) {
     socklen_t addr_len = sizeof(&addr);
-    char buffer[sizeof(Packet)];
     Packet *packet = (Packet *)malloc(sizeof(Packet));
     int last_ack = -1; // Last ACKed sequence number
     int expected_seq_num = 0; // Expected next sequence number
@@ -268,28 +267,23 @@ void handle_packet(int sockfd, struct sockaddr_storage *addr) {
             perror("recvfrom");
             exit(EXIT_FAILURE);
         }
-//        printf("%s", packet);
-//        deserialize_packet(buffer, packet);
-//        memcpy(packet, buffer, sizeof(*packet));
 
         if (packet->seq_num == expected_seq_num) {
-            // ACKS
+            // ACKs
             last_ack = packet->seq_num;
             printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
-//            free(packet);
-            Packet *ackpacket = make_packet(last_ack, "ACK");
-            sendto(sockfd, ackpacket, sizeof(Packet)+1, 0, (struct sockaddr *) addr, addr_len);
-            free(ackpacket);
+            Packet *ack_packet = make_packet(last_ack, "ACK");
+            sendto(sockfd, ack_packet, sizeof(Packet) + 1, 0, (struct sockaddr *) addr, addr_len);
+            free(ack_packet);
             expected_seq_num++;
         } else {
-            printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
+            printf("Got: Seq: %d, Expecting: Seq: %d\n", packet->seq_num, expected_seq_num);
             printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
-//            free(packet);
-            Packet *ackpacket = make_packet(last_ack, "ACK");
-            sendto(sockfd, ackpacket, sizeof(Packet), 0, (struct sockaddr *) addr, addr_len);
-            free(ackpacket);
+            Packet *ack_packet = make_packet(last_ack, "ACK");
+            sendto(sockfd, ack_packet, sizeof(Packet) + 1, 0, (struct sockaddr *) addr, addr_len);
+            free(ack_packet);
         }
 //        free(packet);
     }
