@@ -44,8 +44,8 @@ static void setup_signal_handler();
 
 static void sigint_handler(int signum);
 
-static int handle_proxy(int socket_fd, struct entity from, struct entity to, struct entity_opt from_opt,
-                        struct entity_opt to_opt);
+static int handle_proxy(int socket_fd, struct entity client, struct entity server, struct entity_opt client_opt,
+                        struct entity_opt server_opt);
 
 static char* set_destination(struct sockaddr_storage *dest_socket_addr, socklen_t *dest_socket_addr_len,
                              struct sockaddr_storage inc_socket_addr, struct entity client, struct entity server);
@@ -71,7 +71,6 @@ static in_port_t parse_in_port_t(char *program_name, char *input);
 
 static void socket_close(int socket_fd);
 
-#define WORD_LEN 256
 #define NO_ARG_MESSAGE_LEN 128
 #define UNKNOWN_OPTION_MESSAGE_LEN 64
 #define BASE_TEN 10
@@ -97,7 +96,6 @@ int main(int argc, char *argv[]) {
     bind_socket(socket_fd, &proxy_socket_addr, proxy.port);
     setup_signal_handler();
     handle_proxy(socket_fd, client, server, client_opt, server_opt);
-//    handle_proxy(socket_fd, server, client, server_opt, client_opt);
 
     return EXIT_SUCCESS;
 }
@@ -263,7 +261,7 @@ static int create_socket(int domain) {
 static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_port_t port) {
     char addr_str[INET6_ADDRSTRLEN];
     socklen_t addr_len;
-    void *vaddr;
+    void *v_addr;
     in_port_t net_port;
 
     net_port = htons(port);
@@ -274,21 +272,21 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
         ipv4_addr = (struct sockaddr_in *) socket_addr;
         addr_len = sizeof(*ipv4_addr);
         ipv4_addr->sin_port = net_port;
-        vaddr = (void *) &(((struct sockaddr_in *) socket_addr)->sin_addr);
+        v_addr = (void *) &(((struct sockaddr_in *) socket_addr)->sin_addr);
     } else if (socket_addr->ss_family == AF_INET6) {
         struct sockaddr_in6 *ipv6_addr;
 
         ipv6_addr = (struct sockaddr_in6 *) socket_addr;
         addr_len = sizeof(*ipv6_addr);
         ipv6_addr->sin6_port = net_port;
-        vaddr = (void *) &(((struct sockaddr_in6 *) socket_addr)->sin6_addr);
+        v_addr = (void *) &(((struct sockaddr_in6 *) socket_addr)->sin6_addr);
     } else {
         fprintf(stderr, "Internal error: addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
                 socket_addr->ss_family);
         exit(EXIT_FAILURE);
     }
 
-    if (inet_ntop(socket_addr->ss_family, vaddr, addr_str, sizeof(addr_str)) == NULL) {
+    if (inet_ntop(socket_addr->ss_family, v_addr, addr_str, sizeof(addr_str)) == NULL) {
         perror("inet_ntop");
         exit(EXIT_FAILURE);
     }
@@ -324,8 +322,8 @@ static void setup_signal_handler(void) {
     }
 }
 
-static int handle_proxy(int socket_fd, struct entity from, struct entity to, struct entity_opt from_opt,
-                        struct entity_opt to_opt) {
+static int handle_proxy(int socket_fd, struct entity client, struct entity server, struct entity_opt client_opt,
+                        struct entity_opt server_opt) {
     while (!exit_flag) {
         struct sockaddr_storage inc_socket_addr;
         socklen_t inc_socket_addr_len = sizeof(inc_socket_addr);
@@ -345,24 +343,25 @@ static int handle_proxy(int socket_fd, struct entity from, struct entity to, str
             free(packet);
             continue;
         }
-        memcpy(buffer, &packet, sizeof(Packet));
-//        printf("Packet data: %s %d", packet->data, packet->seq_num);
-//        buffer[(size_t) bytes_received] = '\0';
-        printf("read %zu characters: \"%s\" sequence: %d \n", (size_t) bytes_received, packet->data, packet->seq_num);
-//        printf("%lu", sizeof(packet));
 
-        dest_entity = set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, from, to);
-        set_drop_flags(dest_entity, &drop_flag, &drop_delay_flag, from_opt, to_opt);
+        memcpy(buffer, &packet, sizeof(Packet));
+        buffer[(size_t) bytes_received] = '\0';
+
+        dest_entity = set_destination(&dest_socket_addr, &dest_socket_addr_len, inc_socket_addr, client, server);
+        set_drop_flags(dest_entity, &drop_flag, &drop_delay_flag, client_opt, server_opt);
 
         if (drop_flag == 0) {
             if (drop_delay_flag == 0) {
+                printf("Packet sent with delay - Data: %s, Seq %d\n", packet->data, packet->seq_num);
                 struct timespec delay;
-                set_delay(dest_entity, &delay, from_opt, to_opt);
+                set_delay(dest_entity, &delay, client_opt, server_opt);
                 nanosleep(&delay, NULL);
+            } else if (drop_delay_flag == 1) {
+                printf("Packet sent with no delay - Data: %s, Seq %d\n", packet->data, packet->seq_num);
             }
             forward_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
-        } else {
-            printf("Packet dropped: %s Seq %d\n", packet->data, packet->seq_num);
+        } else if (drop_flag == 1){
+            printf("Packet dropped - Data: %s, Seq %d\n", packet->data, packet->seq_num);
         }
         free(packet);
     }
@@ -425,7 +424,7 @@ static void get_destination_address(struct sockaddr_storage *socket_addr, in_por
     }
 }
 
-static void forward_packet(int socket_fd,  Packet *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
+static void forward_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
     ssize_t bytes_sent = sendto(socket_fd, buffer, sizeof(Packet), 0,
                                 (struct sockaddr *) &dest_socket_addr, dest_socket_addr_len);
 
@@ -437,8 +436,6 @@ static void forward_packet(int socket_fd,  Packet *buffer, struct sockaddr_stora
 
 static void set_drop_flags(char* dest_entity, int *drop_flag, int *drop_delay_flag, struct entity_opt client_opt,
                            struct entity_opt server_opt) {
-//    srand(time(NULL));
-//    srand(29013.2321);
     float random_num = ((float) rand() / RAND_MAX) * 99 + 1;
 
     if (strcmp(dest_entity, CLIENT) == 0) {
