@@ -10,7 +10,6 @@
 #include <unistd.h>
 #include <signal.h>
 
-// Used to encode
 struct __attribute__((packed)) PACKET {
     int seq_num;
     char data[256];
@@ -33,6 +32,11 @@ static in_port_t parse_in_port_t(const char *program_name, const char *port_str)
 
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message);
 
+static void handle_exit_failure(int socket_fd, FILE *file);
+
+static void initialize_address(char *ip_address, in_port_t port, struct sockaddr_storage *socket_addr,
+                               socklen_t *socket_addr_len, int *socket_fd);
+
 static void convert_address(char *ip_address, struct sockaddr_storage *socket_addr, socklen_t *socket_addr_len);
 
 static void get_destination_address(struct sockaddr_storage *socket_addr, in_port_t port);
@@ -41,27 +45,27 @@ static int create_socket(int domain);
 
 static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_port_t port);
 
-static void validate_word(int socket_fd, FILE *file, char *word);
-
-static void handle_word_transmission(int socket_fd, char *word, FILE *file, int *seq_num,
-                                     struct sockaddr_storage dest_socket_addr);
+static void read_file(char *file_path, int socket_fd, struct sockaddr_storage socket_addr);
 
 static void timeout_handler(int signum);
+
+static void validate_word(int socket_fd, char *word);
+
+static void handle_word_transmission(int socket_fd, char *word, int *seq_num,
+                                     struct sockaddr_storage dest_socket_addr);
+
+static Packet *make_packet(int seq_num, char *data);
 
 static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                         socklen_t dest_socket_addr_len);
 
 static void close_socket(int socket_fd);
 
-static void read_file(char *file_path, int socket_fd, struct sockaddr_storage addr);
-
 static void close_file(FILE *file);
 
-static Packet *make_packet(int seq_num, char *data);
-
+#define LINE_LEN 1024
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
-#define LINE_LEN 1024
 
 static volatile sig_atomic_t timeout_flag = 0;
 
@@ -79,12 +83,6 @@ int main(int argc, char *argv[]) {
     struct sockaddr_storage dest_socket_addr;
     socklen_t dest_socket_addr_len;
 
-    client_ip_address = NULL;
-    client_port_str = NULL;
-    dest_ip_address = NULL;
-    dest_port_str = NULL;
-    file_path = NULL;
-
     parse_arguments(argc, argv, &client_ip_address, &client_port_str, &dest_ip_address, &dest_port_str,
                     &file_path);
     handle_arguments(argv[0], client_ip_address, client_port_str, dest_ip_address, dest_port_str,
@@ -92,13 +90,12 @@ int main(int argc, char *argv[]) {
 
     verify_file(file_path);
 
-    convert_address(client_ip_address, &client_socket_addr, &client_socket_addr_len);
-    convert_address(dest_ip_address, &dest_socket_addr, &dest_socket_addr_len);
+    initialize_address(client_ip_address, client_port, &client_socket_addr,
+                       &client_socket_addr_len, &socket_fd);
 
+    convert_address(dest_ip_address, &dest_socket_addr, &dest_socket_addr_len);
     get_destination_address(&dest_socket_addr, dest_port);
 
-    socket_fd = create_socket(client_socket_addr.ss_family);
-    bind_socket(socket_fd, &client_socket_addr, client_port);
 
     read_file(file_path, socket_fd, dest_socket_addr);
     close_socket(socket_fd);
@@ -182,6 +179,18 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     exit(exit_code);
 }
 
+static void handle_exit_failure(int socket_fd, FILE *file) {
+    if (socket_fd != -1) {
+        close_socket(socket_fd);
+    }
+
+    if (file != NULL) {
+        close_file(file);
+    }
+
+    exit(EXIT_FAILURE);
+}
+
 static void verify_file(char *file_path) {
     FILE *file = fopen(file_path, "r");
 
@@ -194,17 +203,15 @@ static void check_file_size(FILE *file) {
     fseek(file, 0, SEEK_END);
 
     if (ftell(file) == 0) {
-        close_file(file);
-        fprintf(stderr, "File is empty");
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "The file is empty\n");
+        handle_exit_failure(-1, file);
     }
 }
 
 static void check_file_exists(FILE *file) {
     if (file == NULL) {
-        close_file(file);
-        fprintf(stderr, "File does not exist");
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "The file does not exist");
+        handle_exit_failure(-1, file);
     }
 }
 
@@ -217,20 +224,25 @@ in_port_t parse_in_port_t(const char *program_name, const char *str) {
 
     if (errno != 0) {
         perror("Error parsing in_port_t");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(-1, NULL);
     }
 
-    // Check if there are any non-numeric characters in the input string
     if (*end_ptr != '\0') {
         usage(program_name, EXIT_FAILURE, "Invalid characters in input.");
     }
 
-    // Check if the parsed value is within the valid range for in_port_t
     if (parsed_value > UINT16_MAX) {
         usage(program_name, EXIT_FAILURE, "in_port_t value out of range.");
     }
 
     return (in_port_t) parsed_value;
+}
+
+static void initialize_address(char *ip_address, in_port_t port, struct sockaddr_storage *socket_addr,
+                               socklen_t *socket_addr_len, int *socket_fd) {
+    convert_address(ip_address, socket_addr, socket_addr_len);
+    *socket_fd = create_socket(socket_addr->ss_family);
+    bind_socket(*socket_fd, socket_addr, port);
 }
 
 static void convert_address(char *ip_address, struct sockaddr_storage *socket_addr, socklen_t *socket_addr_len) {
@@ -244,7 +256,7 @@ static void convert_address(char *ip_address, struct sockaddr_storage *socket_ad
         *socket_addr_len = sizeof(struct sockaddr_in6);
     } else {
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", ip_address);
-        exit(EXIT_FAILURE);
+        handle_exit_failure(-1, NULL);
     }
 }
 
@@ -271,7 +283,7 @@ static int create_socket(int domain) {
 
     if (socket_fd == -1) {
         perror("Socket creation failed");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(-1, NULL);
     }
 
     return socket_fd;
@@ -279,7 +291,7 @@ static int create_socket(int domain) {
 
 static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_port_t port) {
     char addr_str[INET6_ADDRSTRLEN];
-    socklen_t addr_len;
+    socklen_t addr_len = 0;
     void *v_addr;
     in_port_t net_port;
 
@@ -300,27 +312,27 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
         ipv6_addr->sin6_port = net_port;
         v_addr = (void *) &(((struct sockaddr_in6 *) socket_addr)->sin6_addr);
     } else {
-        fprintf(stderr, "Internal error: addr->ss_family must be AF_INET or AF_INET6, was: %d\n", socket_addr->ss_family);
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "Internal error: addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
+                socket_addr->ss_family);
+        handle_exit_failure(socket_fd, NULL);
     }
 
     if (inet_ntop(socket_addr->ss_family, v_addr, addr_str, sizeof(addr_str)) == NULL) {
         perror("inet_ntop");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd, NULL);
     }
 
     printf("Binding to: %s:%u\n", addr_str, port);
 
     if (bind(socket_fd, (struct sockaddr *) socket_addr, addr_len) == -1) {
-        perror("Binding failed");
         fprintf(stderr, "Error code: %d\n", errno);
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd, NULL);
     }
 
     printf("Bound to socket: %s:%u\n", addr_str, port);
 }
 
-static void read_file(char *file_path, int socket_fd, struct sockaddr_storage addr) {
+static void read_file(char *file_path, int socket_fd, struct sockaddr_storage socket_addr) {
     signal(SIGALRM, timeout_handler);
     FILE *file = fopen(file_path, "r");
     char line[LINE_LEN];
@@ -330,9 +342,10 @@ static void read_file(char *file_path, int socket_fd, struct sockaddr_storage ad
     while (fgets(line, sizeof(line), file) != NULL) {
         char *word;
         word = strtok_r(line, " \t\n", &word_ptr);
+
         while (word != NULL) {
-            validate_word(socket_fd, file, word);
-            handle_word_transmission(socket_fd, word, file, &seq_num, addr);
+            validate_word(socket_fd, word);
+            handle_word_transmission(socket_fd, word, &seq_num, socket_addr);
             word = strtok_r(NULL, " \t\n", &word_ptr);
         }
     }
@@ -342,18 +355,16 @@ static void timeout_handler(int signum) {
     timeout_flag = 1;
 }
 
-static void validate_word(int socket_fd, FILE *file, char *word) {
+static void validate_word(int socket_fd, char *word) {
     size_t word_len = strlen(word);
 
     if (word_len > UINT8_MAX) {
-        fclose(file);
-        close_socket(socket_fd);
         fprintf(stderr, "Word exceeds maximum length of 256");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd, NULL);
     }
 }
 
-static void handle_word_transmission(int socket_fd, char *word, FILE *file, int *seq_num,
+static void handle_word_transmission(int socket_fd, char *word, int *seq_num,
                                      struct sockaddr_storage dest_socket_addr) {
     socklen_t addr_len = sizeof(dest_socket_addr);
     Packet *packet = make_packet(*seq_num, word);
@@ -396,6 +407,8 @@ static Packet *make_packet(int seq_num, char *data) {
     packet->seq_num = seq_num;
     strcpy(packet->data, data);
 
+    printf("Packet Created: %s, %d\n", packet->data, packet->seq_num);
+
     return packet;
 }
 
@@ -406,10 +419,8 @@ static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage d
 
     if (bytes_sent == -1) {
         perror("sendto");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd, NULL);
     }
-
-    printf("Packet Created: %s, %d\n", buffer->data, buffer->seq_num);
 }
 
 static void close_file(FILE *file) {
