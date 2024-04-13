@@ -12,6 +12,7 @@
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
+    int ack_num;
     char data[256];
 } typedef Packet;
 
@@ -36,7 +37,10 @@ static void setup_signal_handler();
 
 static void sigint_handler(int signum);
 
-static void handle_packet(int socket_fd, struct sockaddr_storage *socket_addr);
+static void handle_server(int socket_fd, struct sockaddr_storage *socket_addr);
+
+static void handle_transmission(int socket_fd, int last_ack, struct sockaddr_storage dest_socket_addr,
+                                socklen_t dest_socket_addr_len);
 
 static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                         socklen_t dest_socket_addr_len);
@@ -66,7 +70,7 @@ int main(int argc, char *argv[]) {
 
     setup_signal_handler();
 
-    handle_packet(socket_fd, &sender_socket_addr);
+    handle_server(socket_fd, &sender_socket_addr);
 
     close_socket(socket_fd);
 
@@ -270,38 +274,84 @@ Packet *make_packet(int seq_num, char* data) {
     return packet;
 }
 
-void handle_packet(int socket_fd, struct sockaddr_storage *socket_addr) {
-    socklen_t addr_len = sizeof(&socket_addr);
-    Packet *packet = (Packet *)malloc(sizeof(Packet));
-    int last_ack = -1; // Last ACKed sequence number
-    int expected_seq_num = 0; // Expected next sequence number
-
+void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
     while (!exit_flag) {
+        socklen_t addr_len = sizeof(&socket_addr);
+        Packet *packet = (Packet *) malloc(sizeof(Packet));
+        int last_ack = -1; // Last ACKed sequence number
+        int expected_seq_num = 0; // Expected next sequence number
+
+        char end_str[256];
+        int continue_flag = 0;
         ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
+
         if (bytes_received == -1) {
             perror("recvfrom");
             exit(EXIT_FAILURE);
         }
 
+        if (packet->seq_num > 0) {
+            last_ack = packet->seq_num;
+            printf("Received packet from last time: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Sending ACK: %d\n", last_ack);
+            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+            continue;
+        }
+
         if (packet->seq_num == expected_seq_num) {
-            // ACKS
+            continue_flag = 1;
+            strcpy(end_str, packet->data);
             last_ack = packet->seq_num;
             printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
-            Packet *ackpacket = make_packet(last_ack, "ACK");
-            send_packet(socket_fd, packet, *socket_addr, addr_len);
-            free(ackpacket);
+            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             expected_seq_num++;
         } else {
             printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
             printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
-            Packet *ackpacket = make_packet(last_ack, "ACK");
-            send_packet(socket_fd, ackpacket, *socket_addr, addr_len);
-            free(ackpacket);
+            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+        }
+
+        while (continue_flag) {
+            bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
+
+            if (bytes_received == -1) {
+                perror("recvfrom");
+                exit(EXIT_FAILURE);
+            }
+
+            if (packet->seq_num == expected_seq_num) {
+                if (strcmp(packet->data, end_str) == 0) {
+                    continue_flag = 0;
+                    last_ack = packet->seq_num;
+                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Sending ACK: %d\n", last_ack);
+                    handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+                    expected_seq_num++;
+                } else {
+                    last_ack = packet->seq_num;
+                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Sending ACK: %d\n", last_ack);
+                    handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+                    expected_seq_num++;
+                }
+            } else {
+                printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
+                printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
+                printf("Sending ACK: %d\n", last_ack);
+                handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+            }
         }
     }
 }
+
+static void handle_transmission(int socket_fd, int last_ack, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
+    Packet *ack_packet = make_packet(last_ack, "ACK");
+    send_packet(socket_fd, ack_packet, dest_socket_addr, dest_socket_addr_len);
+    free(ack_packet);
+}
+
 
 static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                         socklen_t dest_socket_addr_len) {

@@ -25,6 +25,7 @@ struct entity_opt {
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
+    int ack_num;
     char data[256];
 } typedef Packet;
 

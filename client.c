@@ -12,6 +12,7 @@
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
+    int ack_num;
     char data[256];
 } typedef Packet;
 
@@ -49,12 +50,12 @@ static void read_file(char *file_path, int socket_fd, struct sockaddr_storage so
 
 static void timeout_handler(int signum);
 
+static void handle_transmission(int socket_fd, char *data, struct sockaddr_storage dest_socket_addr, int *seq_num,
+                                int *ack_num);
+
 static void validate_word(int socket_fd, char *word);
 
-static void handle_word_transmission(int socket_fd, char *word, int *seq_num,
-                                     struct sockaddr_storage dest_socket_addr);
-
-static Packet *make_packet(int seq_num, char *data);
+static Packet *make_packet(int seq_num, int ack_num, char *data);
 
 static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                         socklen_t dest_socket_addr_len);
@@ -95,7 +96,6 @@ int main(int argc, char *argv[]) {
 
     convert_address(dest_ip_address, &dest_socket_addr, &dest_socket_addr_len);
     get_destination_address(&dest_socket_addr, dest_port);
-
 
     read_file(file_path, socket_fd, dest_socket_addr);
     close_socket(socket_fd);
@@ -338,6 +338,9 @@ static void read_file(char *file_path, int socket_fd, struct sockaddr_storage so
     char line[LINE_LEN];
     char *word_ptr;
     int seq_num = 0;
+    int ack_num = 0;
+
+    handle_transmission(socket_fd, "end_conn", socket_addr, &seq_num, &ack_num);
 
     while (fgets(line, sizeof(line), file) != NULL) {
         char *word;
@@ -345,14 +348,50 @@ static void read_file(char *file_path, int socket_fd, struct sockaddr_storage so
 
         while (word != NULL) {
             validate_word(socket_fd, word);
-            handle_word_transmission(socket_fd, word, &seq_num, socket_addr);
+            handle_transmission(socket_fd, word, socket_addr, &seq_num, &ack_num);
             word = strtok_r(NULL, " \t\n", &word_ptr);
         }
     }
+
+    handle_transmission(socket_fd, "end_conn", socket_addr, &seq_num, &ack_num);
 }
 
 static void timeout_handler(int signum) {
     timeout_flag = 1;
+}
+
+static void handle_transmission(int socket_fd, char *data, struct sockaddr_storage dest_socket_addr, int *seq_num,
+        int *ack_num) {
+    socklen_t dest_socket_addr_len = sizeof(dest_socket_addr);
+    Packet *packet = make_packet(*seq_num, *ack_num, data);
+    send_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
+    *seq_num = *seq_num + 1;
+    alarm(3);
+    Packet ack;
+
+    int continue_flag = 1;
+
+    while (continue_flag) {
+        ssize_t bytes_received = recvfrom(socket_fd, &ack, sizeof(Packet), MSG_DONTWAIT, (struct sockaddr *) &dest_socket_addr,
+                                          &dest_socket_addr_len);
+        if (bytes_received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (timeout_flag == 1) {
+                printf("Packet retransmitting: %s, %d\n", packet->data, packet->seq_num);
+                send_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
+                alarm(3);
+                timeout_flag = 0;
+            }
+        } else if (bytes_received >= 0) {
+            if (ack.seq_num + 1 == *seq_num) {
+                alarm(3);
+                continue_flag = 0;
+            }
+            timeout_flag = 0;
+            printf("Received ACK: %d\n", ack.seq_num);
+        }
+    }
+
+    free(packet);
 }
 
 static void validate_word(int socket_fd, char *word) {
@@ -364,39 +403,7 @@ static void validate_word(int socket_fd, char *word) {
     }
 }
 
-static void handle_word_transmission(int socket_fd, char *word, int *seq_num,
-                                     struct sockaddr_storage dest_socket_addr) {
-    socklen_t addr_len = sizeof(dest_socket_addr);
-    Packet *packet = make_packet(*seq_num, word);
-    send_packet(socket_fd, packet, dest_socket_addr, addr_len);
-    *seq_num = *seq_num + 1;
-    alarm(3);
-    Packet ack;
-
-    int test = 0;
-
-    while (test == 0) {
-        ssize_t bytes_received = recvfrom(socket_fd, &ack, sizeof(Packet), MSG_DONTWAIT, (struct sockaddr *) &dest_socket_addr,
-                                  &addr_len);
-        if (bytes_received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            if (timeout_flag == 1) {
-                printf("Packet retransmitting: %s, %d\n", packet->data, packet->seq_num);
-                send_packet(socket_fd, packet, dest_socket_addr, addr_len);
-                alarm(3);
-                timeout_flag = 0;
-            }
-        } else if (bytes_received >= 0) {
-            if (ack.seq_num + 1 == *seq_num) {
-                alarm(2);
-                test = 1;
-            }
-            timeout_flag = 0;
-            printf("Received ACK: %d\n", ack.seq_num);
-        }
-    }
-}
-
-static Packet *make_packet(int seq_num, char *data) {
+static Packet *make_packet(int seq_num, int ack_num, char *data) {
     Packet *packet = (Packet *) malloc(sizeof(Packet));
 
     if (packet == NULL) {
@@ -405,6 +412,7 @@ static Packet *make_packet(int seq_num, char *data) {
     }
 
     packet->seq_num = seq_num;
+    packet->ack_num = ack_num;
     strcpy(packet->data, data);
 
     printf("Packet Created: %s, %d\n", packet->data, packet->seq_num);
