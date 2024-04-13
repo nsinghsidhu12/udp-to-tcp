@@ -10,6 +10,13 @@
 #include <errno.h>
 #include <time.h>
 
+#define WORD_LEN 256
+#define NO_ARG_MESSAGE_LEN 128
+#define UNKNOWN_OPTION_MESSAGE_LEN 64
+#define BASE_TEN 10
+#define SERVER "server"
+#define CLIENT "client"
+
 struct entity {
     char *ip_address;
     char *port_str;
@@ -25,8 +32,7 @@ struct entity_opt {
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
-    int ack_num;
-    char data[256];
+    char data[WORD_LEN];
 } typedef Packet;
 
 static void parse_arguments(int argc, char *argv[], struct entity *proxy, struct entity *client, struct entity *server,
@@ -37,7 +43,7 @@ static void handle_arguments(char *program_name, struct entity *proxy, struct en
 
 _Noreturn static void usage(char *program_name, int exit_code, char *message);
 
-static void handle_exit_failure(int socket_fd);
+static void handle_exit_failure(int socket_fd, Packet *packet);
 
 static double parse_percent(char *program_name, char *input);
 
@@ -76,12 +82,6 @@ static void forward_packet(int socket_fd, Packet *buffer, struct sockaddr_storag
                            socklen_t dest_socket_addr_len);
 
 static void close_socket(int socket_fd);
-
-#define NO_ARG_MESSAGE_LEN 128
-#define UNKNOWN_OPTION_MESSAGE_LEN 64
-#define BASE_TEN 10
-#define SERVER "server"
-#define CLIENT "client"
 
 static volatile sig_atomic_t exit_flag = 0;
 
@@ -244,7 +244,7 @@ static double parse_percent(char *program_name, char *input) {
 
     if (errno != 0) {
         perror("Error parsing convert_to_percent");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 
     if (*end_ptr != '\0') {
@@ -267,7 +267,7 @@ static double parse_milliseconds(char *program_name, char *input) {
 
     if (errno != 0) {
         perror("Error parsing milliseconds");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 
     if (*end_ptr != '\0') {
@@ -290,7 +290,7 @@ static in_port_t parse_in_port_t(char *program_name, char *input) {
 
     if (errno != 0) {
         perror("Error parsing in_port_t");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 
     if (*end_ptr != '\0') {
@@ -326,9 +326,13 @@ _Noreturn static void usage(char *program_name, int exit_code, char *message) {
     exit(exit_code);
 }
 
-static void handle_exit_failure(int socket_fd) {
+static void handle_exit_failure(int socket_fd, Packet *packet) {
     if (socket_fd != -1) {
         close_socket(socket_fd);
+    }
+
+    if (packet != NULL) {
+        free(packet);
     }
 
     exit(EXIT_FAILURE);
@@ -352,7 +356,7 @@ static void convert_address(char *ip_address, struct sockaddr_storage *socket_ad
         *socket_addr_len = sizeof(struct sockaddr_in6);
     } else {
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", ip_address);
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 }
 
@@ -363,7 +367,7 @@ static int create_socket(int domain) {
 
     if (socket_fd == -1) {
         perror("Socket creation failed");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 
     return socket_fd;
@@ -394,12 +398,12 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     } else {
         fprintf(stderr, "Internal error: addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
                 socket_addr->ss_family);
-        handle_exit_failure(socket_fd);
+        handle_exit_failure(socket_fd, NULL);
     }
 
     if (inet_ntop(socket_addr->ss_family, v_addr, addr_str, sizeof(addr_str)) == NULL) {
         perror("inet_ntop");
-        handle_exit_failure(socket_fd);
+        handle_exit_failure(socket_fd, NULL);
     }
 
     printf("Binding to: %s:%u\n", addr_str, port);
@@ -407,7 +411,7 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     if (bind(socket_fd, (struct sockaddr *) socket_addr, addr_len) == -1) {
         perror("Binding failed");
         fprintf(stderr, "Error code: %d\n", errno);
-        handle_exit_failure(socket_fd);
+        handle_exit_failure(socket_fd, NULL);
     }
 
     printf("Bound to socket: %s:%u\n", addr_str, port);
@@ -425,7 +429,7 @@ static void setup_signal_handler(void) {
 
     if (sigaction(SIGINT, &sig_action, NULL) == -1) {
         perror("sigaction");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 }
 
@@ -451,7 +455,7 @@ static int handle_proxy(int socket_fd, struct entity client, struct entity serve
 
         if (bytes_received == -1) {
             perror("recvfrom");
-            free(packet);
+            handle_exit_failure(socket_fd, packet);
         }
 
         memcpy(buffer, &packet, sizeof(Packet));
@@ -476,6 +480,8 @@ static int handle_proxy(int socket_fd, struct entity client, struct entity serve
         free(packet);
     }
 
+    printf("AFTER EXIT\n");
+
     close_socket(socket_fd);
 
     return EXIT_SUCCESS;
@@ -497,7 +503,7 @@ static char *set_destination(struct sockaddr_storage *dest_socket_addr, socklen_
     } else {
         fprintf(stderr, "inc_socket_addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
                 inc_socket_addr.ss_family);
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 
     if (strcmp(ip_address, client.ip_address) == 0 && (port == client.port)) {
@@ -510,7 +516,7 @@ static char *set_destination(struct sockaddr_storage *dest_socket_addr, socklen_
         return CLIENT;
     } else {
         fprintf(stderr, "Destination is not the client or server");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 }
 
@@ -530,7 +536,7 @@ static void get_destination_address(struct sockaddr_storage *socket_addr, in_por
     } else {
         fprintf(stderr, "socket_addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
                 socket_addr->ss_family);
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 }
 
@@ -540,7 +546,7 @@ static void forward_packet(int socket_fd, Packet *buffer, struct sockaddr_storag
 
     if (bytes_sent == -1) {
         perror("sendto");
-        handle_exit_failure(socket_fd);
+        handle_exit_failure(socket_fd, buffer);
     }
 }
 
@@ -562,7 +568,7 @@ static void set_drop_flags(char* dest_entity, int *drop_flag, int *drop_delay_fl
         }
     } else {
         fprintf(stderr, "Destination is not set as the client or server");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 }
 
@@ -580,7 +586,7 @@ static void set_delay(char* dest_entity, struct timespec *delay, struct entity_o
         delay->tv_nsec = (long)((random_delay - (double) delay->tv_sec * 1000) * 1000000);
     } else {
         fprintf(stderr, "Destination is not set as the client or server");
-        handle_exit_failure(-1);
+        handle_exit_failure(-1, NULL);
     }
 }
 
