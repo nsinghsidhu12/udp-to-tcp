@@ -73,8 +73,6 @@ static void close_file(FILE *file);
 
 static volatile sig_atomic_t timeout_flag = 0;
 
-static volatile sig_atomic_t client_id = 0;
-
 int main(int argc, char *argv[]) {
     char *client_ip_address;
     char *client_port_str;
@@ -83,7 +81,6 @@ int main(int argc, char *argv[]) {
     char *dest_port_str;
     in_port_t dest_port;
     char *file_path;
-    char *end_conn_str;
     int socket_fd;
     struct sockaddr_storage client_socket_addr;
     socklen_t client_socket_addr_len;
@@ -136,7 +133,7 @@ static void parse_arguments(int argc, char *argv[], char **client_ip_address, ch
     }
 
     if (optind < argc - 5) {
-        usage(argv[0], EXIT_FAILURE, "Too many arguments.=");
+        usage(argv[0], EXIT_FAILURE, "Too many arguments");
     }
 
     *client_ip_address = argv[optind];

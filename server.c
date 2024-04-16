@@ -23,6 +23,8 @@ static in_port_t parse_in_port_t(const char *program_name, const char *port_str)
 
 _Noreturn static void usage(const char *program_name, int exit_code, const char *message);
 
+static void handle_exit_failure(int socket_fd);
+
 static void initialize_address(char *ip_address, in_port_t port, struct sockaddr_storage *socket_addr,
                                socklen_t *socket_addr_len, int *socket_fd);
 
@@ -164,6 +166,14 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
     exit(exit_code);
 }
 
+static void handle_exit_failure(int socket_fd) {
+    if (socket_fd != -1) {
+        close_socket(socket_fd);
+    }
+
+    exit(EXIT_FAILURE);
+}
+
 static void initialize_address(char *ip_address, in_port_t port, struct sockaddr_storage *socket_addr,
                                socklen_t *socket_addr_len, int *socket_fd) {
     convert_address(ip_address, socket_addr, socket_addr_len);
@@ -182,7 +192,7 @@ static void convert_address(const char *ip_address, struct sockaddr_storage *soc
         *socket_addr_len = sizeof(struct sockaddr_in6);
     } else {
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", ip_address);
-        // handle_exit_failure(-1, NULL);
+        handle_exit_failure(-1);
     }
 }
 
@@ -193,7 +203,7 @@ static int create_socket(int domain) {
 
     if (socket_fd == -1) {
         perror("Socket creation failed");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(-1);
     }
 
     return socket_fd;
@@ -201,7 +211,7 @@ static int create_socket(int domain) {
 
 static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_port_t port) {
     char addr_str[INET6_ADDRSTRLEN];
-    socklen_t addr_len;
+    socklen_t addr_len = 0;
     void *v_addr;
     in_port_t net_port;
 
@@ -224,12 +234,12 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     } else {
         fprintf(stderr, "Internal error: addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
                 socket_addr->ss_family);
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd);
     }
 
     if (inet_ntop(socket_addr->ss_family, v_addr, addr_str, sizeof(addr_str)) == NULL) {
         perror("inet_ntop");
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd);
     }
 
     printf("Binding to: %s:%u\n", addr_str, port);
@@ -237,7 +247,7 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     if (bind(socket_fd, (struct sockaddr *) socket_addr, addr_len) == -1) {
         perror("Binding failed");
         fprintf(stderr, "Error code: %d\n", errno);
-        exit(EXIT_FAILURE);
+        handle_exit_failure(socket_fd);
     }
 
     printf("Bound to socket: %s:%u\n", addr_str, port);
@@ -255,7 +265,7 @@ static void setup_signal_handler(void) {
 
     if (sigaction(SIGINT, &sig_action, NULL) == -1) {
         perror("sigaction");
-        //handle_exit_failure(-1);
+        handle_exit_failure(-1);
     }
 }
 
@@ -284,14 +294,12 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
         Packet *packet = (Packet *) malloc(sizeof(Packet));
         int last_ack = -1; // Last ACKed sequence number
         int expected_seq_num = 0; // Expected next sequence number
-
-//        char end_str[256];
         int continue_flag = 0;
         ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
 
         if (bytes_received == -1) {
             perror("recvfrom");
-            exit(EXIT_FAILURE);
+            handle_exit_failure(socket_fd);
         }
 
 
@@ -322,14 +330,11 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
 
             if (bytes_received == -1) {
                 perror("recvfrom");
-                exit(EXIT_FAILURE);
+                handle_exit_failure(socket_fd);
             }
 
             if(strcmp(packet->data, START_STRING) == 0) {
                 printf("New Connection\n");
-                continue_flag = 0;
-                last_ack = -1;
-                expected_seq_num = 0;
                 break;
             }
 
@@ -373,7 +378,7 @@ static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage d
 
     if (bytes_sent == -1) {
         perror("sendto");
-        //handle_exit_failure(socket_fd, NULL);
+        handle_exit_failure(socket_fd);
     }
 }
 
