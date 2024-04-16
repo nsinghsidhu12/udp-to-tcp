@@ -12,7 +12,6 @@
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
-    int ack_num;
     char data[256];
 } typedef Packet;
 
@@ -46,6 +45,8 @@ static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage d
                         socklen_t dest_socket_addr_len);
 
 static void close_socket(int socket_fd);
+
+
 
 #define LINE_LEN 1024
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
