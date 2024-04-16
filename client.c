@@ -14,6 +14,8 @@
 #define WORD_LEN 256
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
+#define END_STRING "FIN"
+#define START_STRING "SYN"
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
@@ -21,11 +23,11 @@ struct __attribute__((packed)) PACKET {
 } typedef Packet;
 
 static void parse_arguments(int argc, char *argv[], char **client_ip_address, char **client_port_str,
-                            char **dest_ip_address, char **dest_port_str, char **file_path, char **end_conn_str);
+                            char **dest_ip_address, char **dest_port_str, char **file_path);
 
 static void handle_arguments(char *program_name, const char *client_ip_address, const char *client_port_str,
                              const char *dest_ip_address, const char *dest_port_str, const char *file_path,
-                             const char *end_conn_str, in_port_t *client_port, in_port_t *dest_port);
+                             in_port_t *client_port, in_port_t *dest_port);
 
 static void verify_file(char *file_path);
 
@@ -50,7 +52,7 @@ static int create_socket(int domain);
 
 static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_port_t port);
 
-static void handle_client(char *file_path, char *end_conn_str, int socket_fd, struct sockaddr_storage dest_socket_addr);
+static void handle_client(char *file_path,int socket_fd, struct sockaddr_storage dest_socket_addr);
 
 static void read_file(char *file_path, int socket_fd, struct sockaddr_storage dest_socket_addr, int *seq_num);
 
@@ -88,10 +90,9 @@ int main(int argc, char *argv[]) {
     struct sockaddr_storage dest_socket_addr;
     socklen_t dest_socket_addr_len;
 
-    parse_arguments(argc, argv, &client_ip_address, &client_port_str, &dest_ip_address, &dest_port_str, &file_path,
-                    &end_conn_str);
+    parse_arguments(argc, argv, &client_ip_address, &client_port_str, &dest_ip_address, &dest_port_str, &file_path);
     handle_arguments(argv[0], client_ip_address, client_port_str, dest_ip_address, dest_port_str, file_path,
-                     end_conn_str, &client_port, &dest_port);
+                     &client_port, &dest_port);
 
     verify_file(file_path);
 
@@ -101,14 +102,14 @@ int main(int argc, char *argv[]) {
     convert_address(dest_ip_address, &dest_socket_addr, &dest_socket_addr_len);
     get_destination_address(&dest_socket_addr, dest_port);
 
-    handle_client(file_path, end_conn_str, socket_fd, dest_socket_addr);
+    handle_client(file_path, socket_fd, dest_socket_addr);
     close_socket(socket_fd);
 
     return EXIT_SUCCESS;
 }
 
 static void parse_arguments(int argc, char *argv[], char **client_ip_address, char **client_port_str,
-                            char **dest_ip_address, char **dest_port_str, char **file_path, char **end_conn_str) {
+                            char **dest_ip_address, char **dest_port_str, char **file_path) {
     int opt;
 
     opterr = 0;
@@ -130,11 +131,11 @@ static void parse_arguments(int argc, char *argv[], char **client_ip_address, ch
         }
     }
 
-    if (optind + 5 >= argc) {
+    if (optind + 4 >= argc) {
         usage(argv[0], EXIT_FAILURE, "Too few arguments");
     }
 
-    if (optind < argc - 6) {
+    if (optind < argc - 5) {
         usage(argv[0], EXIT_FAILURE, "Too many arguments.=");
     }
 
@@ -143,12 +144,11 @@ static void parse_arguments(int argc, char *argv[], char **client_ip_address, ch
     *dest_ip_address = argv[optind + 2];
     *dest_port_str = argv[optind + 3];
     *file_path = argv[optind + 4];
-    *end_conn_str = argv[optind + 5];
 }
 
 static void handle_arguments(char *program_name, const char *client_ip_address, const char *client_port_str,
                              const char *dest_ip_address, const char *dest_port_str, const char *file_path,
-                             const char *end_conn_str, in_port_t *client_port, in_port_t *dest_port) {
+                             in_port_t *client_port, in_port_t *dest_port) {
     if (client_ip_address == NULL) {
         usage(program_name, EXIT_FAILURE, "The client ip address is required");
     }
@@ -167,10 +167,6 @@ static void handle_arguments(char *program_name, const char *client_ip_address, 
 
     if (file_path == NULL) {
         usage(program_name, EXIT_FAILURE, "The file path is required");
-    }
-
-    if (end_conn_str == NULL) {
-        usage(program_name, EXIT_FAILURE, "The end connection string is required");
     }
 
     *client_port = parse_in_port_t(program_name, client_port_str);
@@ -346,16 +342,15 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     printf("Bound to socket: %s:%u\n", addr_str, port);
 }
 
-static void handle_client(char *file_path, char *end_conn_str, int socket_fd, struct sockaddr_storage dest_socket_addr) {
+static void handle_client(char *file_path, int socket_fd, struct sockaddr_storage dest_socket_addr) {
     signal(SIGALRM, timeout_handler);
     int seq_num = 0;
 
-    handle_transmission(socket_fd, end_conn_str, dest_socket_addr, &seq_num);
+    handle_transmission(socket_fd, START_STRING, dest_socket_addr, &seq_num);
 
     read_file(file_path, socket_fd, dest_socket_addr, &seq_num);
 
-    // Sends the data for the file
-    handle_transmission(socket_fd, end_conn_str, dest_socket_addr, &seq_num);
+    handle_transmission(socket_fd, END_STRING, dest_socket_addr, &seq_num);
 }
 
 static void read_file(char *file_path, int socket_fd, struct sockaddr_storage socket_addr, int *seq_num) {
