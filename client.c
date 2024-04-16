@@ -71,6 +71,8 @@ static void close_file(FILE *file);
 
 static volatile sig_atomic_t timeout_flag = 0;
 
+static volatile sig_atomic_t client_id = 0;
+
 int main(int argc, char *argv[]) {
     char *client_ip_address;
     char *client_port_str;
@@ -352,6 +354,7 @@ static void handle_client(char *file_path, char *end_conn_str, int socket_fd, st
 
     read_file(file_path, socket_fd, dest_socket_addr, &seq_num);
 
+    // Sends the data for the file
     handle_transmission(socket_fd, end_conn_str, dest_socket_addr, &seq_num);
 }
 

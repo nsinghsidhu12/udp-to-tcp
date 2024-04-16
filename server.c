@@ -10,25 +10,18 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define LINE_LEN 1024
-#define WORD_LEN 256
-#define UNKNOWN_OPTION_MESSAGE_LEN 24
-#define BASE_TEN 10
-
 struct __attribute__((packed)) PACKET {
     int seq_num;
-    char data[WORD_LEN];
+    char data[256];
 } typedef Packet;
 
 static void parse_arguments(int argc, char *argv[], char **ip_address, char **port);
 
 static void handle_arguments(const char *program_name, const char *ip_address, const char *port_str, in_port_t *port);
 
-_Noreturn static void usage(const char *program_name, int exit_code, const char *message);
-
-static void handle_exit_failure(int socket_fd, Packet *packet);
-
 static in_port_t parse_in_port_t(const char *program_name, const char *port_str);
+
+_Noreturn static void usage(const char *program_name, int exit_code, const char *message);
 
 static void initialize_address(char *ip_address, in_port_t port, struct sockaddr_storage *socket_addr,
                                socklen_t *socket_addr_len, int *socket_fd);
@@ -48,12 +41,16 @@ static void handle_server(int socket_fd, struct sockaddr_storage *socket_addr);
 static void handle_transmission(int socket_fd, int last_ack, struct sockaddr_storage dest_socket_addr,
                                 socklen_t dest_socket_addr_len);
 
-Packet *make_packet(int seq_num, char* data);
-
 static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                         socklen_t dest_socket_addr_len);
 
 static void close_socket(int socket_fd);
+
+
+
+#define LINE_LEN 1024
+#define UNKNOWN_OPTION_MESSAGE_LEN 24
+#define BASE_TEN 10
 
 static volatile sig_atomic_t exit_flag = 0;
 
@@ -112,7 +109,7 @@ static void parse_arguments(int argc, char *argv[], char **ip_address, char **po
     }
 
     if (optind < argc - 2) {
-        usage(argv[0], EXIT_FAILURE, "Error: Too many arguments");
+        usage(argv[0], EXIT_FAILURE, "Error: Too many arguments.");
     }
 
     *ip_address = argv[optind];
@@ -121,37 +118,14 @@ static void parse_arguments(int argc, char *argv[], char **ip_address, char **po
 
 static void handle_arguments(const char *program_name, const char *ip_address, const char *port_str, in_port_t *port) {
     if (ip_address == NULL) {
-        usage(program_name, EXIT_FAILURE, "The ip address is required");
+        usage(program_name, EXIT_FAILURE, "The ip address is required.");
     }
 
     if (port_str == NULL) {
-        usage(program_name, EXIT_FAILURE, "The port is required");
+        usage(program_name, EXIT_FAILURE, "The port is required.");
     }
 
     *port = parse_in_port_t(program_name, port_str);
-}
-
-_Noreturn static void usage(const char *program_name, int exit_code, const char *message) {
-    if (message) {
-        fprintf(stderr, "%s\n", message);
-    }
-
-    fprintf(stderr, "Usage: %s <ip address> <port> [-h]\n", program_name);
-    fputs("Options:\n", stderr);
-    fputs("  -h  Display this help message\n", stderr);
-    exit(exit_code);
-}
-
-static void handle_exit_failure(int socket_fd, Packet *packet) {
-    if (socket_fd != -1) {
-        close_socket(socket_fd);
-    }
-
-    if (packet != NULL) {
-        free(packet);
-    }
-
-    exit(EXIT_FAILURE);
 }
 
 in_port_t parse_in_port_t(const char *program_name, const char *str) {
@@ -163,18 +137,29 @@ in_port_t parse_in_port_t(const char *program_name, const char *str) {
 
     if (errno != 0) {
         perror("Error parsing in_port_t");
-        handle_exit_failure(-1, NULL);
+        exit(EXIT_FAILURE);
     }
 
     if (*end_ptr != '\0') {
-        usage(program_name, EXIT_FAILURE, "Invalid characters in input");
+        usage(program_name, EXIT_FAILURE, "Invalid characters in input.");
     }
 
     if (parsed_value > UINT16_MAX) {
-        usage(program_name, EXIT_FAILURE, "in_port_t value out of range");
+        usage(program_name, EXIT_FAILURE, "in_port_t value out of range.");
     }
 
     return (in_port_t) parsed_value;
+}
+
+_Noreturn static void usage(const char *program_name, int exit_code, const char *message) {
+    if (message) {
+        fprintf(stderr, "%s\n", message);
+    }
+
+    fprintf(stderr, "Usage: %s <ip address> <port> [-h]\n", program_name);
+    fputs("Options:\n", stderr);
+    fputs("  -h  Display this help message\n", stderr);
+    exit(exit_code);
 }
 
 static void initialize_address(char *ip_address, in_port_t port, struct sockaddr_storage *socket_addr,
@@ -195,7 +180,7 @@ static void convert_address(const char *ip_address, struct sockaddr_storage *soc
         *socket_addr_len = sizeof(struct sockaddr_in6);
     } else {
         fprintf(stderr, "%s is not an IPv4 or an IPv6 address\n", ip_address);
-        handle_exit_failure(-1, NULL);
+        // handle_exit_failure(-1, NULL);
     }
 }
 
@@ -206,7 +191,7 @@ static int create_socket(int domain) {
 
     if (socket_fd == -1) {
         perror("Socket creation failed");
-        handle_exit_failure(-1, NULL);
+        exit(EXIT_FAILURE);
     }
 
     return socket_fd;
@@ -214,7 +199,7 @@ static int create_socket(int domain) {
 
 static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_port_t port) {
     char addr_str[INET6_ADDRSTRLEN];
-    socklen_t addr_len = 0;
+    socklen_t addr_len;
     void *v_addr;
     in_port_t net_port;
 
@@ -237,12 +222,12 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     } else {
         fprintf(stderr, "Internal error: addr->ss_family must be AF_INET or AF_INET6, was: %d\n",
                 socket_addr->ss_family);
-        handle_exit_failure(socket_fd, NULL);
+        exit(EXIT_FAILURE);
     }
 
     if (inet_ntop(socket_addr->ss_family, v_addr, addr_str, sizeof(addr_str)) == NULL) {
         perror("inet_ntop");
-        handle_exit_failure(socket_fd, NULL);
+        exit(EXIT_FAILURE);
     }
 
     printf("Binding to: %s:%u\n", addr_str, port);
@@ -250,7 +235,7 @@ static void bind_socket(int socket_fd, struct sockaddr_storage *socket_addr, in_
     if (bind(socket_fd, (struct sockaddr *) socket_addr, addr_len) == -1) {
         perror("Binding failed");
         fprintf(stderr, "Error code: %d\n", errno);
-        handle_exit_failure(socket_fd, NULL);
+        exit(EXIT_FAILURE);
     }
 
     printf("Bound to socket: %s:%u\n", addr_str, port);
@@ -268,92 +253,12 @@ static void setup_signal_handler(void) {
 
     if (sigaction(SIGINT, &sig_action, NULL) == -1) {
         perror("sigaction");
-        handle_exit_failure(-1, NULL);
+        //handle_exit_failure(-1);
     }
 }
 
 static void sigint_handler(int signum) {
     exit_flag = 1;
-}
-
-void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
-    while (!exit_flag) {
-        socklen_t addr_len = sizeof(&socket_addr);
-        Packet *packet = (Packet *) malloc(sizeof(Packet));
-        int last_ack = -1; // Last ACKed sequence number
-        int expected_seq_num = 0; // Expected next sequence number
-
-        char end_str[WORD_LEN];
-        int continue_flag = 0;
-        ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0,
-                                          (struct sockaddr *) socket_addr, &addr_len);
-
-        if (bytes_received == -1) {
-            perror("recvfrom");
-            handle_exit_failure(socket_fd, packet);
-        }
-
-        if (packet->seq_num > 0) {
-            last_ack = packet->seq_num;
-            printf("Received packet from previous session - Data: %s, Seq: %d\n", packet->data, packet->seq_num);
-            printf("Sending Packet ACK - Data: ACK, Seq: %d\n", last_ack);
-            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
-            continue;
-        }
-
-        if (packet->seq_num == expected_seq_num) {
-            continue_flag = 1;
-            strcpy(end_str, packet->data);
-            last_ack = packet->seq_num;
-            printf("Received packet to connect - Data: %s, Seq: %d\n", packet->data, packet->seq_num);
-            printf("Sending Packet ACK - Data: ACK, Seq: %d\n", last_ack);
-            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
-            expected_seq_num++;
-        } else {
-            printf("Received packet out of order, duplicate, or corrupted: - Data: %s, Seq: %d\n", packet->data,
-                   packet->seq_num);
-            printf("Sending Packet ACK - Data: ACK, Seq: %d\n", last_ack);
-            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
-        }
-
-        while (continue_flag) {
-            bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
-
-            if (bytes_received == -1) {
-                perror("recvfrom");
-                handle_exit_failure(socket_fd, packet);
-            }
-
-            if (packet->seq_num == expected_seq_num) {
-                if (strcmp(packet->data, end_str) == 0) {
-                    continue_flag = 0;
-                    last_ack = packet->seq_num;
-                    printf("Received packet to end connection - Data: %s, seq_num: %d\n", packet->data,
-                           packet->seq_num);
-                    printf("Sending Packet ACK - Data: ACK, Seq: %d\n", last_ack);
-                    handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
-                    expected_seq_num++;
-                } else {
-                    last_ack = packet->seq_num;
-                    printf("Received packet - Data: %s, Seq: %d\n", packet->data, packet->seq_num);
-                    printf("Sending Packet ACK - Data: ACK, Seq: %d\n", last_ack);
-                    handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
-                    expected_seq_num++;
-                }
-            } else {
-                printf("Received packet out of order, duplicate, or corrupted - Data: %s, Seq: %d\n",
-                       packet->data, packet->seq_num);
-                printf("Sending Packet ACK - Data: ACK, Seq: %d\n", last_ack);
-                handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
-            }
-        }
-    }
-}
-
-static void handle_transmission(int socket_fd, int last_ack, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
-    Packet *ack_packet = make_packet(last_ack, "ACK");
-    send_packet(socket_fd, ack_packet, dest_socket_addr, dest_socket_addr_len);
-    free(ack_packet);
 }
 
 Packet *make_packet(int seq_num, char* data) {
@@ -370,6 +275,84 @@ Packet *make_packet(int seq_num, char* data) {
     return packet;
 }
 
+void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
+    while (!exit_flag) {
+        socklen_t addr_len = sizeof(&socket_addr);
+        Packet *packet = (Packet *) malloc(sizeof(Packet));
+        int last_ack = -1; // Last ACKed sequence number
+        int expected_seq_num = 0; // Expected next sequence number
+
+        char end_str[256];
+        int continue_flag = 0;
+        ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
+
+        if (bytes_received == -1) {
+            perror("recvfrom");
+            exit(EXIT_FAILURE);
+        }
+
+        if (packet->seq_num > 0) {
+            last_ack = packet->seq_num;
+            printf("Received packet from last time: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Sending ACK: %d\n", last_ack);
+            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+            continue;
+        }
+
+        if (packet->seq_num == expected_seq_num) {
+            continue_flag = 1;
+            strcpy(end_str, packet->data);
+            last_ack = packet->seq_num;
+            printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Sending ACK: %d\n", last_ack);
+            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+            expected_seq_num++;
+        } else {
+            printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
+            printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
+            printf("Sending ACK: %d\n", last_ack);
+            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+        }
+
+        while (continue_flag) {
+            bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
+
+            if (bytes_received == -1) {
+                perror("recvfrom");
+                exit(EXIT_FAILURE);
+            }
+
+            if (packet->seq_num == expected_seq_num) {
+                if (strcmp(packet->data, end_str) == 0) {
+                    continue_flag = 0;
+                    last_ack = packet->seq_num;
+                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Sending ACK: %d\n", last_ack);
+                    handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+                    expected_seq_num++;
+                } else {
+                    last_ack = packet->seq_num;
+                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Sending ACK: %d\n", last_ack);
+                    handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+                    expected_seq_num++;
+                }
+            } else {
+                printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
+                printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
+                printf("Sending ACK: %d\n", last_ack);
+                handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
+            }
+        }
+    }
+}
+
+static void handle_transmission(int socket_fd, int last_ack, struct sockaddr_storage dest_socket_addr, socklen_t dest_socket_addr_len) {
+    Packet *ack_packet = make_packet(last_ack, "ACK");
+    send_packet(socket_fd, ack_packet, dest_socket_addr, dest_socket_addr_len);
+    free(ack_packet);
+}
+
 
 static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage dest_socket_addr,
                         socklen_t dest_socket_addr_len) {
@@ -378,7 +361,7 @@ static void send_packet(int socket_fd, Packet *buffer, struct sockaddr_storage d
 
     if (bytes_sent == -1) {
         perror("sendto");
-        handle_exit_failure(socket_fd, buffer);
+        //handle_exit_failure(socket_fd, NULL);
     }
 }
 
