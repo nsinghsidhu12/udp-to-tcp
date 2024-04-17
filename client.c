@@ -385,7 +385,7 @@ static void handle_transmission(int socket_fd, char *data, struct sockaddr_stora
     Packet *packet = make_packet(*seq_num, data);
     send_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
     *seq_num = *seq_num + 1;
-    alarm(3);
+    alarm(2);
     Packet ack;
 
     int continue_flag = 1;
@@ -401,12 +401,12 @@ static void handle_transmission(int socket_fd, char *data, struct sockaddr_stora
 
                 printf("Packet retransmitting - Data: %s, Seq: %d, Elapsed time: %f seconds\n", packet->data, packet->seq_num, elapsed_time);
                 send_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
-                alarm(3);
+                alarm(2);
                 timeout_flag = 0;
             }
         } else if (bytes_received >= 0) {
             if (ack.seq_num + 1 == *seq_num) {
-                alarm(3);
+                alarm(2);
                 continue_flag = 0;
             }
             struct timespec now;
