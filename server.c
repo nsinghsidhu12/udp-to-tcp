@@ -354,7 +354,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
 
             if (strcmp(packet->data, START_STRING) == 0) {
                 printf("==============================\n");
-                printf("       New Connection\n         ");
+                printf("       New Connection\n");
                 printf("==============================\n");
                 handle_transmission(socket_fd, 0, *socket_addr, addr_len);
                 expected_seq_num = 1;
