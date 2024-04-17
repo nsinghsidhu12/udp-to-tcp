@@ -175,7 +175,7 @@ _Noreturn static void usage(const char *program_name, int exit_code, const char 
         fprintf(stderr, "%s\n", message);
     }
 
-    fprintf(stderr, "Usage: %s <ip address> <port> <proxy ip address> <proxy port> <end connection string>"
+    fprintf(stderr, "Usage: %s <ip address> <port> <destination ip address> <destination port>"
                     " [-h]\n", program_name);
     fputs("Options:\n", stderr);
     fputs("  -h  Display this help message\n", stderr);
