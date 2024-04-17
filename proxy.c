@@ -451,6 +451,7 @@ static int handle_proxy(int socket_fd, struct entity client, struct entity serve
         if (bytes_received == -1) {
             perror("recvfrom");
             free(packet);
+            handle_exit_failure(socket_fd);
         }
 
         memcpy(buffer, &packet, sizeof(Packet));
@@ -511,6 +512,8 @@ static char *set_destination(struct sockaddr_storage *dest_socket_addr, socklen_
         fprintf(stderr, "Destination is not the client or server");
         handle_exit_failure(-1);
     }
+
+    return NULL;
 }
 
 static void get_destination_address(struct sockaddr_storage *socket_addr, in_port_t port) {

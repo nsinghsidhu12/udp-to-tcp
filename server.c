@@ -302,8 +302,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
             handle_exit_failure(socket_fd);
         }
 
-
-        if (packet->seq_num > 0) {
+        if (packet->seq_num > 0 && strcmp(packet->data, END_STRING) == 0) {
             last_ack = packet->seq_num;
             printf("Received packet from last time: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
@@ -333,7 +332,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
                 handle_exit_failure(socket_fd);
             }
 
-            if(strcmp(packet->data, START_STRING) == 0) {
+            if (strcmp(packet->data, START_STRING) == 0) {
                 printf("New Connection\n");
                 break;
             }
