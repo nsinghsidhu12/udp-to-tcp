@@ -92,12 +92,20 @@ int main(int argc, char *argv[]) {
     struct entity_opt server_opt = {50, 50, 1000, 2000};
     struct sockaddr_storage proxy_socket_addr;
     socklen_t proxy_socket_addr_len;
+    struct sockaddr_storage client_socket_addr;
+    socklen_t client_socket_addr_len;
+    struct sockaddr_storage server_socket_addr;
+    socklen_t server_socket_addr_len;
     int socket_fd;
 
     parse_arguments(argc, argv, &proxy, &client, &server, &client_opt, &server_opt);
     handle_arguments(argv[0], &proxy, &client, &server, client_opt, server_opt);
     initialize_address(proxy.ip_address, proxy.port, &proxy_socket_addr,&proxy_socket_addr_len,
                        &socket_fd);
+
+    convert_address(client.ip_address, &client_socket_addr, &client_socket_addr_len);
+    convert_address(server.ip_address, &server_socket_addr, &server_socket_addr_len);
+
     setup_signal_handler();
     handle_proxy(socket_fd, client, server, client_opt, server_opt);
 

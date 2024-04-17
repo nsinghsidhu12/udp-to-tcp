@@ -302,9 +302,9 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
             handle_exit_failure(socket_fd);
         }
 
-        if (packet->seq_num > 0 && strcmp(packet->data, END_STRING) == 0) {
+        if (packet->seq_num > 0 || strcmp(packet->data, END_STRING) == 0) {
             last_ack = packet->seq_num;
-            printf("Received packet from last time: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Received packet from last time: data: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
             handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             continue;
@@ -313,15 +313,10 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
         if (packet->seq_num == expected_seq_num) {
             continue_flag = 1;
             last_ack = packet->seq_num;
-            printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Received packet, data: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
             handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             expected_seq_num++;
-        } else {
-            printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
-            printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
-            printf("Sending ACK: %d\n", last_ack);
-            handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
         }
 
         while (continue_flag) {
@@ -334,20 +329,22 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
 
             if (strcmp(packet->data, START_STRING) == 0) {
                 printf("New Connection\n");
-                break;
+                handle_transmission(socket_fd, 0, *socket_addr, addr_len);
+                expected_seq_num = 1;
+                continue;
             }
 
             if (packet->seq_num == expected_seq_num) {
                 if (strcmp(packet->data, END_STRING) == 0) {
                     continue_flag = 0;
                     last_ack = packet->seq_num;
-                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Received packet, data: %s, seq_num: %d\n", packet->data, packet->seq_num);
                     printf("Sending ACK: %d\n", last_ack);
                     handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
                     expected_seq_num++;
                 } else {
                     last_ack = packet->seq_num;
-                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Received packet, data: %s, seq_num: %d\n", packet->data, packet->seq_num);
                     printf("Sending ACK: %d\n", last_ack);
                     handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
                     expected_seq_num++;
@@ -355,7 +352,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
 
             } else {
                 printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
-                printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
+                printf("Packet info, data: %s, seq_num: %d\n", packet->data,packet->seq_num);
                 printf("Sending ACK: %d\n", last_ack);
                 handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             }
