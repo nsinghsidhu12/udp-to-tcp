@@ -600,4 +600,3 @@ static void close_socket(int socket_fd) {
         exit(EXIT_FAILURE);
     }
 }
-
