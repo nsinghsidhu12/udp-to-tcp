@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <time.h>
 
 struct __attribute__((packed)) PACKET {
     int seq_num;
@@ -58,6 +59,8 @@ static void close_socket(int socket_fd);
 
 static volatile sig_atomic_t exit_flag = 0;
 
+//static clock_t start_time;
+
 int main(int argc, char *argv[]) {
     char *server_ip_address;
     char *server_port_str;
@@ -66,6 +69,7 @@ int main(int argc, char *argv[]) {
     struct sockaddr_storage server_socket_addr;
     socklen_t server_socket_addr_len;
     struct sockaddr_storage sender_socket_addr;
+//    start_time = clock();
 
     parse_arguments(argc, argv, &server_ip_address, &server_port_str);
     handle_arguments(argv[0], server_ip_address, server_port_str, &server_port);
@@ -288,6 +292,10 @@ Packet *make_packet(int seq_num, char* data) {
 }
 
 void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
+    static struct timespec start_time = {0, 0};
+    if (start_time.tv_sec == 0 && start_time.tv_nsec == 0) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+    }
 
     while (!exit_flag) {
         socklen_t addr_len = sizeof(&socket_addr);
@@ -297,16 +305,21 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
         int continue_flag = 0;
         ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
 
+
         if (bytes_received == -1) {
             perror("recvfrom");
             handle_exit_failure(socket_fd);
         }
 
-
         if (packet->seq_num > 0) {
             last_ack = packet->seq_num;
             printf("Received packet from last time: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
+
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+            printf("Elapsed time: %f seconds\n", elapsed_time);
             handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             continue;
         }
@@ -316,12 +329,22 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
             last_ack = packet->seq_num;
             printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+            printf("Elapsed time: %f seconds\n", elapsed_time);
+
             handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             expected_seq_num++;
         } else {
             printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
             printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
+
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+            printf("Elapsed time: %f seconds\n", elapsed_time);
             handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
         }
 
@@ -344,12 +367,20 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
                     last_ack = packet->seq_num;
                     printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
                     printf("Sending ACK: %d\n", last_ack);
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+                    printf("Elapsed time: %f seconds\n", elapsed_time);
                     handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
                     expected_seq_num++;
                 } else {
                     last_ack = packet->seq_num;
                     printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
                     printf("Sending ACK: %d\n", last_ack);
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+                    printf("Elapsed time: %f seconds\n", elapsed_time);
                     handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
                     expected_seq_num++;
                 }
@@ -358,6 +389,10 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
                 printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
                 printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
                 printf("Sending ACK: %d\n", last_ack);
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+                printf("Elapsed time: %f seconds\n", elapsed_time);
                 handle_transmission(socket_fd, last_ack, *socket_addr, addr_len);
             }
         }

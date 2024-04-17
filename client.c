@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 
 #define LINE_LEN 1024
 #define WORD_LEN 256
@@ -73,6 +74,8 @@ static void close_file(FILE *file);
 
 static volatile sig_atomic_t timeout_flag = 0;
 
+//static clock_t start_time;
+
 int main(int argc, char *argv[]) {
     char *client_ip_address;
     char *client_port_str;
@@ -86,6 +89,7 @@ int main(int argc, char *argv[]) {
     socklen_t client_socket_addr_len;
     struct sockaddr_storage dest_socket_addr;
     socklen_t dest_socket_addr_len;
+//    start_time = clock();
 
     parse_arguments(argc, argv, &client_ip_address, &client_port_str, &dest_ip_address, &dest_port_str, &file_path);
     handle_arguments(argv[0], client_ip_address, client_port_str, dest_ip_address, dest_port_str, file_path,
@@ -372,6 +376,11 @@ static void timeout_handler(int signum) {
 }
 
 static void handle_transmission(int socket_fd, char *data, struct sockaddr_storage dest_socket_addr, int *seq_num) {
+    static struct timespec start_time = {0, 0};
+    if (start_time.tv_sec == 0 && start_time.tv_nsec == 0) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+    }
+
     socklen_t dest_socket_addr_len = sizeof(dest_socket_addr);
     Packet *packet = make_packet(*seq_num, data);
     send_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
@@ -386,7 +395,11 @@ static void handle_transmission(int socket_fd, char *data, struct sockaddr_stora
                                           &dest_socket_addr_len);
         if (bytes_received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             if (timeout_flag == 1) {
-                printf("Packet retransmitting - Data: %s, Seq: %d\n", packet->data, packet->seq_num);
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
+
+                printf("Packet retransmitting - Data: %s, Seq: %d, Elapsed time: %f seconds\n", packet->data, packet->seq_num, elapsed_time);
                 send_packet(socket_fd, packet, dest_socket_addr, dest_socket_addr_len);
                 alarm(3);
                 timeout_flag = 0;
@@ -396,8 +409,11 @@ static void handle_transmission(int socket_fd, char *data, struct sockaddr_stora
                 alarm(3);
                 continue_flag = 0;
             }
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double elapsed_time = (now.tv_sec - start_time.tv_sec) + (now.tv_nsec - start_time.tv_nsec) / 1e9;
             timeout_flag = 0;
-            printf("Received Packet ACK - Data: %s, Seq: %d\n", ack.data, ack.seq_num);
+            printf("Received Packet ACK - Data: %s, Seq: %d, Elapsed time %f seconds\n", ack.data, ack.seq_num, elapsed_time);
         }
     }
 
