@@ -59,8 +59,6 @@ static void close_socket(int socket_fd);
 
 static volatile sig_atomic_t exit_flag = 0;
 
-//static clock_t start_time;
-
 int main(int argc, char *argv[]) {
     char *server_ip_address;
     char *server_port_str;
@@ -69,7 +67,6 @@ int main(int argc, char *argv[]) {
     struct sockaddr_storage server_socket_addr;
     socklen_t server_socket_addr_len;
     struct sockaddr_storage sender_socket_addr;
-//    start_time = clock();
 
     parse_arguments(argc, argv, &server_ip_address, &server_port_str);
     handle_arguments(argv[0], server_ip_address, server_port_str, &server_port);
@@ -305,15 +302,14 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
         int continue_flag = 0;
         ssize_t bytes_received = recvfrom(socket_fd, packet, sizeof(Packet), 0, (struct sockaddr *) socket_addr, &addr_len);
 
-
         if (bytes_received == -1) {
             perror("recvfrom");
             handle_exit_failure(socket_fd);
         }
 
-        if (packet->seq_num > 0) {
+        if (packet->seq_num > 0 || strcmp(packet->data, END_STRING) == 0) {
             last_ack = packet->seq_num;
-            printf("Received packet from last time: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Received packet from last time: data: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
 
             struct timespec now;
@@ -327,7 +323,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
         if (packet->seq_num == expected_seq_num) {
             continue_flag = 1;
             last_ack = packet->seq_num;
-            printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+            printf("Received packet, data: %s, seq_num: %d\n", packet->data, packet->seq_num);
             printf("Sending ACK: %d\n", last_ack);
             struct timespec now;
             clock_gettime(CLOCK_MONOTONIC, &now);
@@ -356,16 +352,18 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
                 handle_exit_failure(socket_fd);
             }
 
-            if(strcmp(packet->data, START_STRING) == 0) {
+            if (strcmp(packet->data, START_STRING) == 0) {
                 printf("New Connection\n");
-                break;
+                handle_transmission(socket_fd, 0, *socket_addr, addr_len);
+                expected_seq_num = 1;
+                continue;
             }
 
             if (packet->seq_num == expected_seq_num) {
                 if (strcmp(packet->data, END_STRING) == 0) {
                     continue_flag = 0;
                     last_ack = packet->seq_num;
-                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Received packet, data: %s, seq_num: %d\n", packet->data, packet->seq_num);
                     printf("Sending ACK: %d\n", last_ack);
                     struct timespec now;
                     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -375,7 +373,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
                     expected_seq_num++;
                 } else {
                     last_ack = packet->seq_num;
-                    printf("Received packet: %s, seq_num: %d\n", packet->data, packet->seq_num);
+                    printf("Received packet, data: %s, seq_num: %d\n", packet->data, packet->seq_num);
                     printf("Sending ACK: %d\n", last_ack);
                     struct timespec now;
                     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -387,7 +385,7 @@ void handle_server(int socket_fd, struct sockaddr_storage *socket_addr) {
 
             } else {
                 printf("Received packet out of order, duplicate, or corrupted: seq_num: %d\n", packet->seq_num);
-                printf("Packet info: %s, %d\n", packet->data,packet->seq_num);
+                printf("Packet info, data: %s, seq_num: %d\n", packet->data,packet->seq_num);
                 printf("Sending ACK: %d\n", last_ack);
                 struct timespec now;
                 clock_gettime(CLOCK_MONOTONIC, &now);
