@@ -22,23 +22,23 @@ The points below outline the initial arguments and options of the client, server
 proxy programs.
  - Client
     - The client requires five arguments from the command line
-        - <ip address>
-        - <port>
-        - <proxy ip address>
-        - <proxy port>
-        - <filepath>
+        - ip address
+        - port
+        - proxy ip address
+        - proxy port
+        - filepath
  - Server
     - The server requires two arguments from the command line
-        - <ip address>
-        - <port>
+        - ip address
+        - port
  - Proxy
     - The proxy requires six arguments from the command line
-        - <ip address>
-        - <port>
-        - <client ip address>
-        - <client port>
-        - <server ip address>
-        - <server port>
+        - ip address
+        - port
+        - client ip address
+        - client port
+        - server ip address
+        - server port
     - The proxy accepts eight options from the command line
         - --cdrop <value> (client drop chance)
         - --sdrop <value> (server drop chance)
